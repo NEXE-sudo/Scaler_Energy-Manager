@@ -1,255 +1,572 @@
 ---
-title: Scaler Hackathon Environment Server
-emoji: 🎽
-colorFrom: pink
-colorTo: pink
+title: Energy Grid OpenEnv
+emoji: ⚡
+colorFrom: yellow
+colorTo: green
 sdk: docker
 pinned: false
-app_port: 8000
-base_path: /web
 tags:
   - openenv
+  - reinforcement-learning
+  - energy
+  - grid
+  - real-world
 ---
 
-# Scaler Hackathon Environment
+# ⚡ Energy Grid OpenEnv
 
-A simple test environment that echoes back messages. Perfect for testing the env APIs as well as demonstrating environment usage patterns.
+A realistic national electricity grid simulation environment for training
+and evaluating AI agents on multi-objective energy dispatch.
 
-## Quick Start
+Built for the [Scaler x OpenEnv Hackathon](https://openenv.ai).
+Fully compliant with the [OpenEnv spec](https://github.com/meta-pytorch/OpenEnv).
 
-The simplest way to use the Scaler Hackathon environment is through the `ScalerHackathonEnv` class:
+---
+
+## Overview
+
+Running a national electricity grid is one of the most consequential
+real-time optimisation problems in the world. Grid operators must
+simultaneously:
+
+- Match generation to demand every second to avoid blackouts
+- Minimise fuel costs and carbon emissions
+- Manage unpredictable renewable output (solar, wind)
+- Respond to equipment failures and weather events
+- Maintain grid frequency within tight tolerances (±1 Hz)
+- Make long-term investment decisions under uncertainty
+
+This environment models all of these challenges in a physically realistic
+simulation. An agent that scores well here has learned skills directly
+transferable to real grid management decision support.
+
+**Why this matters for the RL/agent community:**
+Real grid operators make thousands of decisions per day under time
+pressure with incomplete information. This environment provides a
+standardised benchmark for evaluating whether LLM agents can reason
+about energy systems — a domain with immediate real-world impact as
+grids transition to higher renewable penetration.
+
+---
+
+## Simulation Physics
+
+### Energy Sources
+
+| Source  | Max MW | Ramp/step | Fuel cost | Inertia | Notes                                         |
+| ------- | ------ | --------- | --------- | ------- | --------------------------------------------- |
+| Coal    | 600    | ±100 MW   | 1.0–2.5×  | High    | Min stable 200 MW, 3-step restart             |
+| Solar   | 300    | N/A       | Free      | None    | Sine curve, daytime only, weather-dependent   |
+| Wind    | 250    | N/A       | Free      | None    | Autocorrelated stochastic, cubic power curve  |
+| Hydro   | 200    | ±80 MW    | Free      | High    | Reservoir-limited, rainfall/drought sensitive |
+| Nuclear | 500    | ±10 MW    | ~Free     | V.High  | Baseload, min 300 MW, 8-step SCRAM restart    |
+| Battery | 50 MW  | Instant   | None      | None    | 200 MWh capacity, 92% round-trip efficiency   |
+
+### Grid Frequency Model
+
+Grid frequency is simulated using the swing equation:
+
+```
+RoCoF = ΔP / (2 × H × S_base)
+```
+
+Where H is total system inertia (contributed only by synchronous
+machines: coal, hydro, nuclear). Solar, wind, and battery are
+inverter-based and contribute zero inertia.
+
+**Protection thresholds:**
+
+| Frequency               | Consequence                            |
+| ----------------------- | -------------------------------------- |
+| < 49.0 Hz               | Load shedding begins (100 MW)          |
+| < 48.5 Hz               | Heavy load shedding (200 MW)           |
+| < 47.5 Hz               | Full blackout — episode ends           |
+| > 51.5 Hz               | Over-frequency blackout — episode ends |
+| \|RoCoF\| > 1.0 Hz/step | Protection trip                        |
+
+This means replacing coal/nuclear with renewables reduces grid inertia
+and makes the same power imbalance cause faster frequency swings —
+the central challenge of modern grid decarbonisation.
+
+### Hydro Reservoir
+
+The hydro plant uses a realistic reservoir model:
+
+- Natural river inflow: ~15 MWh/step (stochastic)
+- Rainfall event: +80–150 MWh instant refill
+- Drought event: inflow drops to ~2 MWh/step for 8 steps
+- Spillage if reservoir > 950 MWh (waste penalty)
+- Reservoir depletes 1 MWh per 1 MWh generated
+
+### Stochastic Events
+
+| Event          | Effect                               | Tasks        |
+| -------------- | ------------------------------------ | ------------ |
+| `heatwave`     | Demand ×1.25                         | Medium, Hard |
+| `cold_snap`    | Demand ×1.20                         | Medium, Hard |
+| `cloud`        | Solar ×0.6                           | Medium, Hard |
+| `heavy_cloud`  | Solar ×0.3                           | Medium, Hard |
+| `storm`        | Solar ×0.0, panel micro-damage       | Hard         |
+| `calm`         | Wind near zero for 4–6 steps         | Medium, Hard |
+| `rainfall`     | Hydro reservoir +80–150 MWh          | Medium, Hard |
+| `drought`      | Hydro inflow →2 MWh/step × 8 steps   | Hard         |
+| `coal_outage`  | Coal max →300 MW × 3 steps           | Hard         |
+| `nuclear_trip` | Nuclear SCRAM, 8-step restart        | Hard         |
+| `price_spike`  | Coal cost ×2.0–2.5 × 5 steps         | Hard         |
+| `grid_fault`   | Transmission capacity −20% × 3 steps | Hard         |
+
+All events are pre-scheduled at episode start using a fixed seed —
+every run of the same task produces the identical event sequence.
+
+---
+
+## Action Space
 
 ```python
-from Scaler_hackathon import ScalerHackathonAction, ScalerHackathonEnv
-
-try:
-    # Create environment from Docker image
-    Scaler_hackathonenv = ScalerHackathonEnv.from_docker_image("Scaler_hackathon-env:latest")
-
-    # Reset
-    result = Scaler_hackathonenv.reset()
-    print(f"Reset: {result.observation.echoed_message}")
-
-    # Send multiple messages
-    messages = ["Hello, World!", "Testing echo", "Final message"]
-
-    for msg in messages:
-        result = Scaler_hackathonenv.step(ScalerHackathonAction(message=msg))
-        print(f"Sent: '{msg}'")
-        print(f"  → Echoed: '{result.observation.echoed_message}'")
-        print(f"  → Length: {result.observation.message_length}")
-        print(f"  → Reward: {result.reward}")
-
-finally:
-    # Always clean up
-    Scaler_hackathonenv.close()
+class EnergyGridAction(Action):
+    coal_delta: float         # -100 to +100 MW change in coal output
+    hydro_delta: float        # -80 to +80 MW change in hydro output
+    nuclear_delta: float      # -10 to +10 MW change in nuclear output
+    battery_mode: str         # "charge" | "discharge" | "idle"
+    plant_action: str         # "none" | "build_solar" | "build_wind" |
+                              # "build_hydro" | "build_nuclear" | "close_coal"
+    emergency_coal_boost: bool  # +200 MW instant, damages plant 5 steps
+    demand_response_mw: float   # 0–150 MW voluntary load reduction
 ```
 
-That's it! The `ScalerHackathonEnv.from_docker_image()` method handles:
-- Starting the Docker container
-- Waiting for the server to be ready
-- Connecting to the environment
-- Container cleanup when you call `close()`
+**Notes:**
 
-## Building the Docker Image
+- `coal_delta` is clamped to ramp limits (±100 MW/step) and min-stable (200 MW)
+- Going below min-stable shuts down coal — takes 3 steps to restart
+- `nuclear_delta` is clamped to ±10 MW — nuclear ramps very slowly
+- `battery_mode` cannot be both charge and discharge in the same step
+- `plant_action` only has effect in the Hard task (capital budget required)
+- `emergency_coal_boost` overrides ramp limits but reduces `coal_max_mw` by 50 MW for 5 steps
 
-Before using the environment, you need to build the Docker image:
+---
 
-```bash
-# From project root
-docker build -t Scaler_hackathon-env:latest -f server/Dockerfile .
-```
-
-## Deploying to Hugging Face Spaces
-
-You can easily deploy your OpenEnv environment to Hugging Face Spaces using the `openenv push` command:
-
-```bash
-# From the environment directory (where openenv.yaml is located)
-openenv push
-
-# Or specify options
-openenv push --namespace my-org --private
-```
-
-The `openenv push` command will:
-1. Validate that the directory is an OpenEnv environment (checks for `openenv.yaml`)
-2. Prepare a custom build for Hugging Face Docker space (enables web interface)
-3. Upload to Hugging Face (ensuring you're logged in)
-
-### Prerequisites
-
-- Authenticate with Hugging Face: The command will prompt for login if not already authenticated
-
-### Options
-
-- `--directory`, `-d`: Directory containing the OpenEnv environment (defaults to current directory)
-- `--repo-id`, `-r`: Repository ID in format 'username/repo-name' (defaults to 'username/env-name' from openenv.yaml)
-- `--base-image`, `-b`: Base Docker image to use (overrides Dockerfile FROM)
-- `--private`: Deploy the space as private (default: public)
-
-### Examples
-
-```bash
-# Push to your personal namespace (defaults to username/env-name from openenv.yaml)
-openenv push
-
-# Push to a specific repository
-openenv push --repo-id my-org/my-env
-
-# Push with a custom base image
-openenv push --base-image ghcr.io/meta-pytorch/openenv-base:latest
-
-# Push as a private space
-openenv push --private
-
-# Combine options
-openenv push --repo-id my-org/my-env --base-image custom-base:latest --private
-```
-
-After deployment, your space will be available at:
-`https://huggingface.co/spaces/<repo-id>`
-
-The deployed space includes:
-- **Web Interface** at `/web` - Interactive UI for exploring the environment
-- **API Documentation** at `/docs` - Full OpenAPI/Swagger interface
-- **Health Check** at `/health` - Container health monitoring
-- **WebSocket** at `/ws` - Persistent session endpoint for low-latency interactions
-
-## Environment Details
-
-### Action
-**ScalerHackathonAction**: Contains a single field
-- `message` (str) - The message to echo back
-
-### Observation
-**ScalerHackathonObservation**: Contains the echo response and metadata
-- `echoed_message` (str) - The message echoed back
-- `message_length` (int) - Length of the message
-- `reward` (float) - Reward based on message length (length × 0.1)
-- `done` (bool) - Always False for echo environment
-- `metadata` (dict) - Additional info like step count
-
-### Reward
-The reward is calculated as: `message_length × 0.1`
-- "Hi" → reward: 0.2
-- "Hello, World!" → reward: 1.3
-- Empty message → reward: 0.0
-
-## Advanced Usage
-
-### Connecting to an Existing Server
-
-If you already have a Scaler Hackathon environment server running, you can connect directly:
+## Observation Space
 
 ```python
-from Scaler_hackathon import ScalerHackathonEnv
+class EnergyGridObservation(Observation):
+    # Demand & time
+    demand_mw: float              # current grid demand
+    time_of_day: int              # 0–23 hours
+    day: int                      # episode day (1-indexed)
+    step: int                     # total steps elapsed
+    season: str                   # spring | summer | autumn | winter
 
-# Connect to existing server
-Scaler_hackathonenv = ScalerHackathonEnv(base_url="<ENV_HTTP_URL_HERE>")
+    # Generation
+    coal_output_mw: float
+    coal_online: bool
+    coal_startup_steps_remaining: int
+    coal_max_mw: float            # reduced after emergency boost
+    coal_price: float             # current fuel cost multiplier
 
-# Use as normal
-result = Scaler_hackathonenv.reset()
-result = Scaler_hackathonenv.step(ScalerHackathonAction(message="Hello!"))
+    solar_output_mw: float
+    solar_available: bool
+    solar_weather: str            # clear | partial | cloudy | storm
+
+    wind_output_mw: float
+    wind_available: bool
+    wind_speed_ms: float          # useful for anticipating next-step output
+
+    hydro_output_mw: float
+    hydro_available: bool
+    reservoir_level_mwh: float
+    reservoir_capacity_mwh: float
+    natural_inflow_mwh: float     # current river inflow rate
+
+    nuclear_output_mw: float
+    nuclear_available: bool
+    nuclear_online: bool
+    nuclear_trip_steps_remaining: int
+
+    # Storage
+    battery_level_mwh: float
+    battery_capacity_mwh: float   # degrades with cycles
+
+    # Grid health
+    unmet_demand_mw: float        # target: 0
+    overproduction_mw: float
+    grid_frequency: float         # target: 50.0 Hz
+    rate_of_change_hz_per_step: float  # RoCoF — indicates instability
+    system_inertia_seconds: float      # decreases with more renewables
+    primary_response_active: bool      # governor compensating — act within 3 steps
+    load_shedding_mw: float            # involuntary blackout in progress
+    blackout_risk: str            # none | low | medium | high | critical
+    spinning_reserve_mw: float
+    spinning_reserve_required_mw: float  # must be ≥ 20% of demand
+    transmission_capacity_mw: float
+
+    # Events & construction
+    active_events: List[str]
+    plants_under_construction: List[Dict]  # [{type, steps_remaining, capacity_mw}]
+
+    # Economics
+    capital_budget: float
+    cumulative_cost: float
+    cumulative_emissions_tons: float
+    step_reward: float
+
+    # Episode metadata
+    done: bool
+    episode_ended_early: bool     # True if blackout caused early termination
+    task_id: str
 ```
 
-Note: When connecting to an existing server, `Scaler_hackathonenv.close()` will NOT stop the server.
+---
 
-### Using the Context Manager
+## Tasks
 
-The client supports context manager usage for automatic connection management:
+### Task 1 — Easy: Baseline Dispatch
+
+**Steps:** 24 (1 simulated day) | **Season:** Spring
+
+Operate a single coal plant and battery over one day.
+No renewable sources. No stochastic events.
+The agent must learn the daily demand curve (400–880 MW) and dispatch
+coal + battery to meet demand at minimum cost.
+
+**Grader weights:**
+
+- Reliability (% steps demand met): 60%
+- Cost efficiency: 40%
+
+**Expected LLM score:** 0.70–0.85
+
+---
+
+### Task 2 — Medium: Renewable Integration
+
+**Steps:** 48 (2 simulated days) | **Season:** Summer (demand ×1.2)
+
+Add solar and wind to the mix. Cloud cover and calm periods cut
+renewable output unpredictably. Heatwaves cause demand surges.
+The agent must balance cost optimisation against reliability while
+coping with stochastic weather over 48 steps.
+
+**Grader weights:**
+
+- Reliability: 50%
+- Cost efficiency: 25%
+- Battery health (final SoC): 15%
+- Reservoir management: 10% _(battery proxy — tracks careful storage management)_
+
+**Expected LLM score:** 0.50–0.70
+
+---
+
+### Task 3 — Hard: Full Grid Management
+
+**Steps:** 72 (3 simulated days) | **Season:** Winter (demand ×1.3)
+
+All sources available to build with a 2000-unit capital budget.
+Guaranteed coal outage on day 2. Possible nuclear SCRAM. Coal price
+spikes. Drought reducing hydro inflow. Transmission faults.
+
+Strategic decisions matter: nuclear takes 15 steps to build but
+provides cheap baseload; wind takes 6 steps but is variable.
+Building nuclear at step 0 means it comes online at step 15 — useful
+for 57 steps. Building it at step 40 means only 17 steps of benefit.
+
+**Grader weights:**
+
+- Reliability: 40%
+- Cost efficiency: 20%
+- Emissions reduction vs coal-only baseline: 10%
+- Reservoir management: 10%
+- Battery health: 10%
+- Capital efficiency: 10%
+
+**Expected LLM score:** 0.30–0.50
+
+---
+
+## Reward Function
 
 ```python
-from Scaler_hackathon import ScalerHackathonAction, ScalerHackathonEnv
+reward = (
+    # Reliability (primary objective)
+    - 0.10 * unmet_demand_mw          # heavy penalty per MW unserved
+    - 0.002 * overproduction_mw       # small waste penalty
 
-# Connect with context manager (auto-connects and closes)
-with ScalerHackathonEnv(base_url="http://localhost:8000") as env:
-    result = env.reset()
-    print(f"Reset: {result.observation.echoed_message}")
-    # Multiple steps with low latency
-    for msg in ["Hello", "World", "!"]:
-        result = env.step(ScalerHackathonAction(message=msg))
-        print(f"Echoed: {result.observation.echoed_message}")
-```
+    # Grid stability
+    - 0.5 * abs(frequency - 50.0)     # frequency deviation penalty
+    + 0.2 if abs(frequency - 50.0) < 0.1  # bonus for very stable grid
 
-The client uses WebSocket connections for:
-- **Lower latency**: No HTTP connection overhead per request
-- **Persistent session**: Server maintains your environment state
-- **Efficient for episodes**: Better for many sequential steps
+    # Generation costs
+    - 0.001 * coal_output * coal_price
+    - 0.0001 * nuclear_output * 0.05  # nuclear near-free
 
-### Concurrent WebSocket Sessions
+    # Hydro management
+    - 0.05 if reservoir > 950 MWh     # spillage penalty
+    - 0.10 if reservoir < 50 MWh      # critical low warning
 
-The server supports multiple concurrent WebSocket connections. To enable this,
-modify `server/app.py` to use factory mode:
+    # Battery wear
+    - 0.01 * cycle_delta
 
-```python
-# In server/app.py - use factory mode for concurrent sessions
-app = create_app(
-    ScalerHackathonEnvironment,  # Pass class, not instance
-    ScalerHackathonAction,
-    ScalerHackathonObservation,
-    max_concurrent_envs=4,  # Allow 4 concurrent sessions
+    # Spinning reserve shortfall
+    - 0.05 * shortfall_fraction
+
+    # Emissions (Hard task only)
+    - 0.0005 * coal_output * 0.9      # CO2 penalty
+
+    # Catastrophic failure
+    - 500.0 if blackout               # episode-ending penalty
 )
 ```
 
-Then multiple clients can connect simultaneously:
+Rewards are **dense** — every step provides a meaningful signal.
+The agent is never in a sparse reward situation where it must guess
+whether its actions are helping.
+
+---
+
+## API Endpoints
+
+### Standard OpenEnv Endpoints
+
+| Method | Path      | Description                                    |
+| ------ | --------- | ---------------------------------------------- |
+| POST   | `/reset`  | Reset environment. Body: `{"task_id": "easy"}` |
+| POST   | `/step`   | Execute action. Body: EnergyGridAction JSON    |
+| GET    | `/state`  | Current episode state                          |
+| GET    | `/schema` | Action/observation JSON schemas                |
+| WS     | `/ws`     | WebSocket persistent session                   |
+
+### Additional Endpoints
+
+| Method | Path        | Description                                                 |
+| ------ | ----------- | ----------------------------------------------------------- |
+| GET    | `/tasks`    | List all tasks with action schema and plant build reference |
+| POST   | `/grader`   | Return deterministic grade for completed episode            |
+| POST   | `/baseline` | Run LLM baseline agent on all tasks, return scores          |
+| GET    | `/health`   | Health check                                                |
+
+---
+
+## Setup & Usage
+
+### Prerequisites
+
+- Python 3.10+
+- [uv](https://github.com/astral-sh/uv) (`pip install uv`)
+- Docker
+- Groq API key (free at [console.groq.com](https://console.groq.com))
+
+### Local Development (Bazzite / Linux / macOS)
+
+```bash
+# Clone and enter project
+git clone <your-repo-url>
+cd energy-grid-openenv
+
+# Copy environment variables
+cp .env.example .env
+# Edit .env and add your GROQ_API_KEY
+
+# Install dependencies
+uv sync
+
+# Generate lockfile (required for openenv validate)
+uv lock
+
+# Start the server
+uvicorn server.app:app --reload --host 0.0.0.0 --port 8000
+
+# In another terminal — run baseline
+uv run python server/baseline.py
+
+# Quick test (5 steps only)
+uv run python server/baseline.py --tasks easy --max-steps 5
+```
+
+### Local Development (Windows)
+
+```powershell
+# Clone and enter project
+git clone <your-repo-url>
+cd energy-grid-openenv
+
+# Copy environment variables
+copy .env.example .env
+# Edit .env and add your GROQ_API_KEY
+
+# Install dependencies
+uv sync
+
+# Start the server
+uvicorn server.app:app --reload --host 0.0.0.0 --port 8000
+
+# Run baseline
+python server/baseline.py
+```
+
+### Docker
+
+```bash
+# Build image
+docker build -t energy-grid-openenv:latest -f server/Dockerfile .
+
+# Run container
+docker run -p 8000:8000 \
+  -e GROQ_API_KEY=your_key_here \
+  energy-grid-openenv:latest
+
+# Run baseline via /baseline endpoint
+curl -X POST http://localhost:8000/baseline
+
+# Or with Docker exec
+docker exec <container_id> python server/baseline.py
+```
+
+### Validate OpenEnv Compliance
+
+```bash
+# Generate lockfile first
+uv lock
+
+# Run validator
+openenv validate
+```
+
+Expected output:
+
+```
+[PASS] energy-grid-openenv: Ready for deployment
+```
+
+### Quick API Test
+
+```bash
+# Health check
+curl http://localhost:8000/health
+
+# List tasks
+curl http://localhost:8000/tasks
+
+# Reset to easy task
+curl -X POST http://localhost:8000/reset \
+  -H "Content-Type: application/json" \
+  -d '{"task_id": "easy"}'
+
+# Take a step
+curl -X POST http://localhost:8000/step \
+  -H "Content-Type: application/json" \
+  -d '{
+    "coal_delta": 50.0,
+    "battery_mode": "idle",
+    "hydro_delta": 0.0,
+    "nuclear_delta": 0.0,
+    "plant_action": "none",
+    "emergency_coal_boost": false,
+    "demand_response_mw": 0.0
+  }'
+
+# Grade completed episode
+curl -X POST http://localhost:8000/grader
+```
+
+### Using the Python Client
 
 ```python
-from Scaler_hackathon import ScalerHackathonAction, ScalerHackathonEnv
-from concurrent.futures import ThreadPoolExecutor
+from client import EnergyGridEnv
+from models import EnergyGridAction
 
-def run_episode(client_id: int):
-    with ScalerHackathonEnv(base_url="http://localhost:8000") as env:
-        result = env.reset()
-        for i in range(10):
-            result = env.step(ScalerHackathonAction(message=f"Client {client_id}, step {i}"))
-        return client_id, result.observation.message_length
+with EnergyGridEnv(base_url="http://localhost:8000") as env:
+    # Reset to medium task
+    result = env.reset()  # default: easy
+    obs = result.observation
 
-# Run 4 episodes concurrently
-with ThreadPoolExecutor(max_workers=4) as executor:
-    results = list(executor.map(run_episode, range(4)))
+    print(f"Demand: {obs.demand_mw} MW")
+    print(f"Coal: {obs.coal_output_mw} MW")
+    print(f"Frequency: {obs.grid_frequency} Hz")
+
+    # Run one day
+    for step in range(24):
+        action = EnergyGridAction(
+            coal_delta=10.0 if obs.unmet_demand_mw > 0 else -10.0,
+            battery_mode="discharge" if obs.unmet_demand_mw > 50 else "idle",
+        )
+        result = env.step(action)
+        obs = result.observation
+
+        if result.done:
+            break
+
+print(f"Final reward: {result.reward}")
 ```
 
-## Development & Testing
+---
 
-### Direct Environment Testing
+## Baseline Scores
 
-Test the environment logic directly without starting the HTTP server:
+Scores produced by `llama-3.3-70b-versatile` via Groq API
+with hybrid chain-of-thought prompting (one sentence reasoning + JSON action).
 
-```bash
-# From the server directory
-python3 server/Scaler_hackathon_environment.py
-```
+| Task   | Score | Reliability | Cost Eff. | Notes                                          |
+| ------ | ----- | ----------- | --------- | ---------------------------------------------- |
+| Easy   | _TBD_ | _TBD_       | _TBD_     | Run `python server/baseline.py --tasks easy`   |
+| Medium | _TBD_ | _TBD_       | _TBD_     | Run `python server/baseline.py --tasks medium` |
+| Hard   | _TBD_ | _TBD_       | _TBD_     | Run `python server/baseline.py --tasks hard`   |
 
-This verifies that:
-- Environment resets correctly
-- Step executes actions properly
-- State tracking works
-- Rewards are calculated correctly
+> Scores will be populated after first full baseline run.
+> Run `POST /baseline` on the deployed HF Space to reproduce.
 
-### Running Locally
-
-Run the server locally for development:
-
-```bash
-uvicorn server.app:app --reload
-```
+---
 
 ## Project Structure
 
 ```
-Scaler_hackathon/
-├── .dockerignore         # Docker build exclusions
-├── __init__.py            # Module exports
-├── README.md              # This file
-├── openenv.yaml           # OpenEnv manifest
-├── pyproject.toml         # Project metadata and dependencies
-├── uv.lock                # Locked dependencies (generated)
-├── client.py              # ScalerHackathonEnv client
-├── models.py              # Action and Observation models
+energy-grid-openenv/
+├── models.py                        # Typed Pydantic Action + Observation models
+├── client.py                        # WebSocket client
+├── openenv.yaml                     # OpenEnv spec metadata
+├── pyproject.toml                   # Project dependencies
+├── .env.example                     # Environment variable template
+├── README.md                        # This file
 └── server/
-    ├── __init__.py        # Server module exports
-    ├── Scaler_hackathon_environment.py  # Core environment logic
-    ├── app.py             # FastAPI application (HTTP + WebSocket endpoints)
-    └── Dockerfile         # Container image definition
+    ├── app.py                       # FastAPI application + extra endpoints
+    ├── energy_grid_environment.py   # OpenEnv Environment implementation
+    ├── simulator.py                 # Physics engine (all 6 sources + frequency)
+    ├── tasks.py                     # Task configurations (easy/medium/hard)
+    ├── grader.py                    # Deterministic episode scorer
+    ├── baseline.py                  # LLM baseline inference script
+    ├── requirements.txt             # Server dependencies
+    └── Dockerfile                   # Container definition
 ```
+
+---
+
+## Design Decisions
+
+**Why energy grid management?**
+Grid dispatch is a real problem solved by real operators every day.
+The action space maps cleanly to natural language (increase coal,
+discharge battery), the reward signal is dense and physically meaningful,
+and the hard task genuinely challenges frontier models with competing
+objectives and long-horizon reasoning.
+
+**Why Groq + OpenAI client?**
+The hackathon requires the OpenAI Python client. Groq provides a
+free-tier, OpenAI-compatible API with state-of-the-art open models.
+The baseline uses `llama-3.3-70b-versatile` — judges can substitute any
+OpenAI-compatible model by setting `BASELINE_MODEL` and `BASELINE_BASE_URL`.
+
+**Why hybrid chain-of-thought?**
+One sentence of reasoning before the JSON action noticeably improves
+decision quality on complex states (nuclear SCRAM + heatwave + low battery)
+while keeping token usage low enough for Groq free tier.
+
+**Why deterministic events?**
+Fixed seeds mean the same task always presents the same challenges.
+This makes scores reproducible across baseline runs — a hard requirement
+for fair evaluation.
+
+---
+
+## License
+
+BSD-style license — see LICENSE file.
+Environment code copyright Meta Platforms, Inc. and affiliates.
