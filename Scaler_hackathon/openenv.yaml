@@ -1,7 +1,32 @@
 spec_version: 1
-name: Scaler_hackathon
+name: energy-grid-openenv
 type: space
 runtime: fastapi
 app: server.app:app
 port: 8000
-
+description: >
+  A realistic national electricity grid simulation environment for
+  training and evaluating AI agents on multi-objective energy dispatch.
+  Agents manage coal, solar, wind, hydro, and nuclear generation sources,
+  battery storage, and grid frequency stability across 1-3 simulated days.
+  Includes stochastic weather events, plant failures, price spikes, and
+  long-term investment decisions.
+tags:
+  - energy
+  - grid
+  - reinforcement-learning
+  - openenv
+  - real-world
+tasks:
+  - id: easy
+    name: Baseline Dispatch
+    difficulty: easy
+    steps: 24
+  - id: medium
+    name: Renewable Integration
+    difficulty: medium
+    steps: 48
+  - id: hard
+    name: Full Grid Management
+    difficulty: hard
+    steps: 72
