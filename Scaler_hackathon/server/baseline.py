@@ -78,38 +78,56 @@ def _build_client() -> tuple[OpenAI, str]:
     """
     Build OpenAI-compatible client.
 
-    Priority:
-        1. Groq (GROQ_API_KEY) — free tier, recommended
-        2. OpenAI (OPENAI_API_KEY) — fallback, requires credits
+    Priority (Hackathon-compliant):
+        1. API_BASE_URL + MODEL_NAME (required by hackathon spec)
+        2. HF_TOKEN or API_KEY for authentication
+        3. Fall back to legacy env vars (GROQ_API_KEY, etc.) for backward compatibility
     """
+    # Hackathon-required variables
+    api_base_url = os.getenv("API_BASE_URL")
+    model_name = os.getenv("MODEL_NAME")
+    hf_token = os.getenv("HF_TOKEN")
+    api_key = os.getenv("API_KEY")
+    
+    # Legacy variables (backward compatibility)
     groq_key = os.getenv("GROQ_API_KEY")
     openai_key = os.getenv("OPENAI_API_KEY")
-    base_url_override = os.getenv("BASELINE_BASE_URL")
-    model_override = os.getenv("BASELINE_MODEL")
+    base_url_legacy = os.getenv("BASELINE_BASE_URL")
+    model_legacy = os.getenv("BASELINE_MODEL")
 
-    if base_url_override:
-        # Fully custom endpoint
-        api_key = groq_key or openai_key or "dummy"
-        client = OpenAI(api_key=api_key, base_url=base_url_override)
-        model = model_override or "llama-3.3-70b-versatile"
-        return client, model
+    # Use hackathon variables if available
+    if api_base_url and model_name:
+        auth_key = hf_token or api_key or groq_key or openai_key or "dummy"
+        client = OpenAI(api_key=auth_key, base_url=api_base_url)
+        return client, model_name
+    
+    # Fall back to legacy configuration
+    if base_url_legacy or groq_key or openai_key:
+        if base_url_legacy:
+            # Fully custom endpoint (legacy)
+            auth_key = groq_key or openai_key or "dummy"
+            client = OpenAI(api_key=auth_key, base_url=base_url_legacy)
+            model = model_legacy or "llama-3.3-70b-versatile"
+            return client, model
 
-    if groq_key:
-        client = OpenAI(
-            api_key=groq_key,
-            base_url="https://api.groq.com/openai/v1",
-        )
-        model = model_override or "llama-3.3-70b-versatile"
-        return client, model
+        if groq_key:
+            client = OpenAI(
+                api_key=groq_key,
+                base_url="https://api.groq.com/openai/v1",
+            )
+            model = model_legacy or "llama-3.3-70b-versatile"
+            return client, model
 
-    if openai_key:
-        client = OpenAI(api_key=openai_key)
-        model = model_override or "gpt-4o-mini"
-        return client, model
+        if openai_key:
+            client = OpenAI(api_key=openai_key)
+            model = model_legacy or "gpt-4o-mini"
+            return client, model
 
     raise EnvironmentError(
-        "No API key found. Set GROQ_API_KEY (recommended, free) or "
-        "OPENAI_API_KEY in your environment or .env file."
+        "Missing required API configuration. Set either:\n"
+        "  1. API_BASE_URL + MODEL_NAME (hackathon spec), or\n"
+        "  2. GROQ_API_KEY or OPENAI_API_KEY (legacy)\n"
+        "\nSee .env file for examples."
     )
 
 
