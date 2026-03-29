@@ -404,6 +404,7 @@ class EnergyGridEnvironment(Environment):
             capital_budget=round(sim.capital_budget, 2),
             cumulative_cost=round(sim.cumulative_cost, 4),
             cumulative_emissions_tons=round(sim.cumulative_emissions, 2),
+            feedin_credits_mwh=round(sim.cumulative_feedin_credits, 2),
 
             # Episode metadata
             step_reward=round(reward, 4),

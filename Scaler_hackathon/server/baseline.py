@@ -340,60 +340,51 @@ def _build_user_prompt(obs: EnergyGridObservation, task_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _parse_action(response_text: str) -> EnergyGridAction:
-    text = response_text.strip()
+    """
+    Extract JSON ACTION block using balanced-brace extraction.
+    Tolerates markdown fences, single quotes, trailing commas,
+    Python-style booleans, and line-breaks inside the JSON.
+    """
+    # Strip markdown fences
+    txt = re.sub(r'^```[a-z]*\n|```$', '', response_text.strip(), flags=re.MULTILINE)
 
-    # --- Strategy 1: Extract ACTION JSON (greedy match) ---
-    match = re.search(r"ACTION\s*:\s*(\{.*\})", text, re.DOTALL)
-    if match:
-        raw = match.group(1)
+    # Balanced-brace extraction — finds the first complete JSON object
+    def extract_json(s: str) -> Optional[str]:
+        start = s.find('{')
+        if start == -1:
+            return None
+        depth = 0
+        for i, ch in enumerate(s[start:], start):
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    return s[start:i + 1]
+        return None
 
-        # Try direct parse
-        try:
-            return _dict_to_action(json.loads(raw))
-        except json.JSONDecodeError:
-            pass
+    # Try from after ACTION: first, then anywhere in text
+    action_pos = txt.upper().find('ACTION')
+    search_text = txt[action_pos:] if action_pos != -1 else txt
+    raw = extract_json(search_text) or extract_json(txt)
 
-        # --- Fix truncated JSON ---
-        try:
-            last_brace = raw.rfind("}")
-            if last_brace != -1:
-                fixed = raw[: last_brace + 1]
-                return _dict_to_action(json.loads(fixed))
-        except:
-            pass
+    if raw is None:
+        print(f"  [WARN] Parser failed — no JSON found")
+        print(f"  [WARN] Raw response: {txt[:300]}")
+        return EnergyGridAction()
 
-    # --- Strategy 2: Find any valid JSON block ---
-    candidates = re.findall(r"\{.*?\}", text, re.DOTALL)
-    for c in reversed(candidates):
-        try:
-            return _dict_to_action(json.loads(c))
-        except:
-            continue
+    # Normalise: single quotes → double, trailing commas, Python booleans
+    raw = raw.replace("'", '"')
+    raw = re.sub(r',\s*}', '}', raw)
+    raw = re.sub(r'\bTrue\b', 'true', raw)
+    raw = re.sub(r'\bFalse\b', 'false', raw)
 
-    # --- Strategy 3: Ultra fallback (manual extraction) ---
     try:
-        data = {}
-        keys = [
-            "coal_delta", "hydro_delta", "nuclear_delta",
-            "battery_mode", "plant_action",
-            "emergency_coal_boost", "demand_response_mw"
-        ]
-
-        for key in keys:
-            match = re.search(rf'"{key}"\s*:\s*([^,\}}]+)', text)
-            if match:
-                val = match.group(1).strip().strip('"')
-                data[key] = val
-
-        if data:
-            return _dict_to_action(data)
-    except:
-        pass
-
-    # --- Final fallback ---
-    print("  [WARN] Parser failed — using safe default")
-    print(f"  [WARN] Raw response: {text[:200]}")
-    return EnergyGridAction()
+        return _dict_to_action(json.loads(raw))
+    except (json.JSONDecodeError, Exception) as e:
+        print(f"  [WARN] Parser failed — JSON decode error: {e}")
+        print(f"  [WARN] Attempted to parse: {raw[:200]}")
+        return EnergyGridAction()
 
 def _dict_to_action(data: Dict[str, Any]) -> EnergyGridAction:
     """

@@ -1147,9 +1147,6 @@ def simulator_step(
         state.cumulative_feedin_credits += feedin_mw
 
     # 8. Coal
-    scram_coal = "coal_outage" in state.active_events and state.step == min(
-        [s for s, evs in event_schedule.items() if "coal_outage" in evs], default=-1
-    )
     coal_out = step_coal(state.coal, coal_delta, emergency_coal_boost)
     state.coal.output_mw = coal_out
 
