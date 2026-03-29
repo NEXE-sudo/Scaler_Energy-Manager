@@ -454,6 +454,10 @@ class EnergyGridObservation(Observation):
             "Coal emits 0.9 t/MWh. Penalised in Hard task grader."
         ),
     )
+    feedin_credits_mwh: float = Field(
+        default=0.0,
+        description="Cumulative prosumer rooftop solar feed-in credits (MWh).",
+    )
     step_reward: float = Field(
         default=0.0,
         description="Reward received for the previous step.",
@@ -473,3 +477,11 @@ class EnergyGridObservation(Observation):
         default="easy",
         description="Active task identifier: 'easy', 'medium', or 'hard'.",
     )
+
+
+# ---------------------------------------------------------------------------
+# Type Aliases for OpenEnv Compliance
+# ---------------------------------------------------------------------------
+# Map expected names to actual implementation classes
+ScalerHackathonAction = EnergyGridAction
+ScalerHackathonObservation = EnergyGridObservation

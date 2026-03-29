@@ -268,6 +268,7 @@ class GridSimState:
     coal_price: float = 1.0
     cumulative_cost: float = 0.0
     cumulative_emissions: float = 0.0
+    cumulative_feedin_credits: float = 0.0
 
     # Episode tracking
     episode_ended: bool = False
@@ -955,6 +956,7 @@ def compute_reward(
     blackout: bool,
     spillage_occurred: bool,
     task_id: str,
+    feedin_mw: float = 0.0,
 ) -> float:
     """
     Compute step reward.
@@ -999,6 +1001,10 @@ def compute_reward(
     if state.nuclear.available and state.nuclear.online:
         nuclear_mwh = state.nuclear.output_mw
         reward -= 0.0001 * nuclear_mwh * NUCLEAR_FUEL_COST
+
+    # ---- Prosumer feed-in credit ----
+    if feedin_mw > 0:
+        reward += 0.002 * feedin_mw
 
     # ---- Hydro management ----
     if spillage_occurred:
@@ -1134,6 +1140,12 @@ def simulator_step(
     wind_out = compute_wind_output(state.wind)
     state.wind.output_mw = wind_out
 
+    # 7b. Prosumer feed-in (rooftop solar returns excess to grid)
+    feedin_mw = 0.0
+    if state.solar.available and state.solar_weather in ("clear", "partial"):
+        feedin_mw = solar_out * 0.05
+        state.cumulative_feedin_credits += feedin_mw
+
     # 8. Coal
     scram_coal = "coal_outage" in state.active_events and state.step == min(
         [s for s, evs in event_schedule.items() if "coal_outage" in evs], default=-1
@@ -1174,7 +1186,7 @@ def simulator_step(
     )
 
     # 13. Net supply and imbalance
-    total_supply = passive_supply + battery_discharged - battery_charged
+    total_supply = passive_supply + battery_discharged - battery_charged + feedin_mw
     power_imbalance = total_supply - effective_demand
 
     # 14. Transmission capacity constraint
@@ -1209,6 +1221,7 @@ def simulator_step(
         blackout=blackout,
         spillage_occurred=spillage_occurred,
         task_id=task_id,
+        feedin_mw=feedin_mw,
     )
 
     # 18. Economics & emissions

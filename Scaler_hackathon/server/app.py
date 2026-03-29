@@ -58,7 +58,7 @@ try:
     from .energy_grid_environment import EnergyGridEnvironment
     from .tasks import get_tasks_summary, PLANT_BUILD_REFERENCE
     from .grader import grade_result_to_dict
-except ModuleNotFoundError:
+except (ImportError, ModuleNotFoundError):
     from models import EnergyGridAction, EnergyGridObservation
     from server.energy_grid_environment import EnergyGridEnvironment
     from server.tasks import get_tasks_summary, PLANT_BUILD_REFERENCE
@@ -204,9 +204,9 @@ async def grade_episode(request: GraderRequest = GraderRequest()) -> JSONRespons
     "/baseline",
     summary="Run baseline LLM agent",
     description=(
-        "Runs the baseline Groq-powered LLM agent against all three tasks "
+        "Runs the baseline LLM agent against all three tasks "
         "(or a subset specified in the request body). "
-        "Requires GROQ_API_KEY environment variable to be set. "
+        "Requires API_BASE_URL, MODEL_NAME, and HF_TOKEN environment variables. "
         "Returns reproducible scores for each task. "
         "This endpoint blocks until all tasks complete — expect 2–5 minutes."
     ),
@@ -217,8 +217,9 @@ async def run_baseline(request: BaselineRequest = BaselineRequest()) -> JSONResp
     Trigger the baseline inference script programmatically.
 
     Runs in the same process to avoid subprocess complexity in Docker.
-    The baseline agent uses a hybrid chain-of-thought prompt (one sentence
-    reasoning + JSON action) via the Groq API with llama-3.3-70b.
+    The baseline agent uses a planner/executor architecture with rolling
+    conversation history. Model and endpoint are configured via environment
+    variables (API_BASE_URL, MODEL_NAME, HF_TOKEN).
     """
     try:
         # Import here to avoid circular imports at module load
@@ -249,8 +250,8 @@ async def run_baseline(request: BaselineRequest = BaselineRequest()) -> JSONResp
             content={
                 "status": "completed",
                 "baseline_scores": results,
-                "model": "llama-3.3-70b-versatile",
-                "provider": "groq",
+                "model": results.get("model", "unknown"),
+                "provider": "openai-compatible",
             }
         )
 
@@ -264,7 +265,7 @@ async def run_baseline(request: BaselineRequest = BaselineRequest()) -> JSONResp
                 "error": str(exc),
                 "traceback": tb,
                 "hint": (
-                    "Ensure GROQ_API_KEY is set in environment variables. "
+                    "Ensure API_BASE_URL, MODEL_NAME, and HF_TOKEN are set. "
                     "Check server logs for full traceback."
                 ),
             },
@@ -306,11 +307,5 @@ def main(host: str = "0.0.0.0", port: int = 8000) -> None:
     uvicorn.run(app, host=host, port=port)
 
 
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Energy Grid OpenEnv Server")
-    parser.add_argument("--host", type=str, default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8000)
-    args = parser.parse_args()
-    main(host=args.host, port=args.port)
+if __name__ == '__main__':
+    main()

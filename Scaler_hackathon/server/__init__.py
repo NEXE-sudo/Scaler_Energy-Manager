@@ -6,6 +6,6 @@
 
 """Scaler Hackathon environment server components."""
 
-from .Scaler_hackathon_environment import ScalerHackathonEnvironment
+from .energy_grid_environment import EnergyGridEnvironment
 
-__all__ = ["ScalerHackathonEnvironment"]
+__all__ = ["EnergyGridEnvironment"]

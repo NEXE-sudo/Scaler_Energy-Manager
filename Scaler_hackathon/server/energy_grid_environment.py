@@ -436,6 +436,7 @@ class EnergyGridEnvironment(Environment):
             reservoir_capacity_mwh=HYDRO_RESERVOIR_CAP_MWH,
             cumulative_cost=sim.cumulative_cost,
             cumulative_emissions_tons=sim.cumulative_emissions,
+            feedin_credits_mwh=round(sim.cumulative_feedin_credits, 2),
             coal_price=sim.coal_price,
             load_shedding_mw=result.get("load_shed_mw", 0.0),
             active_events=list(sim.active_events),

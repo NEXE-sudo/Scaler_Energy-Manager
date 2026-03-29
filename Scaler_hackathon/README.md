@@ -407,7 +407,7 @@ python server/baseline.py
 
 ```bash
 # Build image
-docker build -t energy-grid-openenv:latest -f server/Dockerfile .
+docker build -t energy-grid-openenv:latest .
 
 # Run container
 docker run -p 8000:8000 \

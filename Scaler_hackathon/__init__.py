@@ -6,11 +6,11 @@
 
 """Scaler Hackathon Environment."""
 
-from .client import ScalerHackathonEnv
+from .Client import EnergyGridEnv
 from .models import ScalerHackathonAction, ScalerHackathonObservation
 
 __all__ = [
     "ScalerHackathonAction",
     "ScalerHackathonObservation",
-    "ScalerHackathonEnv",
+    "EnergyGridEnv",
 ]

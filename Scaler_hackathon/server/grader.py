@@ -59,12 +59,13 @@ class StepLog:
     wind_output_mw: float
     hydro_output_mw: float
     nuclear_output_mw: float
-    battery_level_mwh: float
+    battery_level_mwh: float    
     battery_capacity_mwh: float
     reservoir_level_mwh: float
     reservoir_capacity_mwh: float
     cumulative_cost: float
     cumulative_emissions_tons: float
+    feedin_credits_mwh: float
     coal_price: float
     load_shedding_mw: float
     active_events: List[str]

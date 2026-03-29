@@ -47,3 +47,6 @@ htmlcov/
 
 # Package manager
 uv.lock
+
+# Files
+outputs/*.json

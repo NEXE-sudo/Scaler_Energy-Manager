@@ -34,15 +34,15 @@ def main() -> int:
     # Validate required environment variables
     api_base_url = os.getenv("API_BASE_URL")
     model_name = os.getenv("MODEL_NAME")
-    hf_token = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+    hf_token = os.getenv("HF_TOKEN") or os.getenv("API_KEY") or os.getenv("OPENAI_API_KEY")
     
-    if not api_base_url or not model_name:
+    if not api_base_url or not model_name or not hf_token:
         print("ERROR: Missing required environment variables")
         print()
         print("Required:")
         print("  API_BASE_URL  — API endpoint (e.g., https://api.groq.com/openai/v1)")
         print("  MODEL_NAME    — Model identifier (e.g., llama-3.3-70b-versatile)")
-        print("  HF_TOKEN      — Authentication key (optional if using API_KEY)")
+        print("  HF_TOKEN      — Authentication key (also accepts OPENAI_API_KEY or API_KEY)")
         print()
         print("Set them with:")
         print("  export API_BASE_URL='...'")
@@ -58,6 +58,12 @@ def main() -> int:
     print(f"  API Base: {api_base_url}")
     print(f"  Model:    {model_name}")
     print()
+    
+    # Bridge environment variables to baseline agent
+    os.environ["BASELINE_BASE_URL"] = api_base_url
+    os.environ["BASELINE_MODEL"] = model_name
+    os.environ["GROQ_API_KEY"] = hf_token
+    os.environ["OPENAI_API_KEY"] = hf_token
     
     # Run baseline agent on all three tasks
     try:
@@ -75,9 +81,9 @@ def main() -> int:
         print("=" * 70)
         
         total_score = 0.0
-        task_count = len(results)
+        task_count = len(results.get("results", {}))
         
-        for task_id, result in results.items():
+        for task_id, result in results.get("results", {}).items():
             score = result.get("score", 0.0)
             total_score += score
             print(f"  {task_id.upper():8s}: {score:.4f}")
