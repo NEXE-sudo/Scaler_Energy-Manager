@@ -33,9 +33,12 @@ dev = [
 server = "server.app:main"
 
 [tool.setuptools]
-py-modules = ["client", "models"]
-packages = ["server"]
+packages = ["energy_grid_openenv", "energy_grid_openenv.server"]
 
-[tool.pytest.ini_options]
+[tool.setuptools.package-dir]
+energy_grid_openenv = "."
+energy_grid_openenv.server = "server"
+
+[tool.setuptools.package-data]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
