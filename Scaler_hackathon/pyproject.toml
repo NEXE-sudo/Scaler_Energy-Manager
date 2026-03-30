@@ -34,8 +34,10 @@ server = "server.app:main"
 
 [tool.setuptools]
 include-package-data = true
-packages = ["energy_grid_openenv", "energy_grid_openenv.server"]
-package-dir = { "energy_grid_openenv" = ".", "energy_grid_openenv.server" = "server" }
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
