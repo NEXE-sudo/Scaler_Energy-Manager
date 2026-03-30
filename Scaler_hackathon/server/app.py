@@ -59,10 +59,18 @@ try:
     from .tasks import get_tasks_summary, PLANT_BUILD_REFERENCE
     from .grader import grade_result_to_dict
 except (ImportError, ModuleNotFoundError):
-    from models import EnergyGridAction, EnergyGridObservation
-    from server.energy_grid_environment import EnergyGridEnvironment
-    from server.tasks import get_tasks_summary, PLANT_BUILD_REFERENCE
-    from server.grader import grade_result_to_dict
+    try:
+        # If running as installed package
+        from energy_grid_openenv.models import EnergyGridAction, EnergyGridObservation
+        from energy_grid_openenv.server.energy_grid_environment import EnergyGridEnvironment
+        from energy_grid_openenv.server.tasks import get_tasks_summary, PLANT_BUILD_REFERENCE
+        from energy_grid_openenv.server.grader import grade_result_to_dict
+    except (ImportError, ModuleNotFoundError):
+        # If running locally without package installation
+        from models import EnergyGridAction, EnergyGridObservation
+        from server.energy_grid_environment import EnergyGridEnvironment
+        from server.tasks import get_tasks_summary, PLANT_BUILD_REFERENCE
+        from server.grader import grade_result_to_dict
 
 
 # ---------------------------------------------------------------------------
@@ -115,11 +123,8 @@ class BaselineRequest(BaseModel):
 _http_env: Optional[EnergyGridEnvironment] = None
 
 
-def get_http_env() -> EnergyGridEnvironment:
-    global _http_env
-    if _http_env is None:
-        _http_env = EnergyGridEnvironment()
-    return _http_env
+def get_http_env():
+    return EnergyGridEnvironment()
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +295,9 @@ async def health_check() -> JSONResponse:
         }
     )
 
+@app.get("/")
+async def root():
+    return {"status": "ok"}
 
 # ---------------------------------------------------------------------------
 # Entry point

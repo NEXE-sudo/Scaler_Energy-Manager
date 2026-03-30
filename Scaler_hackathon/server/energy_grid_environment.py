@@ -38,7 +38,10 @@ from openenv.core.env_server.types import State
 try:
     from ..models import EnergyGridAction, EnergyGridObservation
 except ImportError:
-    from models import EnergyGridAction, EnergyGridObservation
+    try:
+        from energy_grid_openenv.models import EnergyGridAction, EnergyGridObservation
+    except ImportError:
+        from models import EnergyGridAction, EnergyGridObservation
 
 try:
     from .simulator import (
@@ -60,24 +63,44 @@ try:
         GradeResult,
     )
 except ImportError:
-    from server.simulator import (
-        GridSimState,
-        build_initial_state,
-        schedule_events,
-        simulator_step,
-        EVENT_DURATIONS,
-        HYDRO_RESERVOIR_CAP_MWH,
-        SPINNING_RESERVE_RATIO,
-        _compute_spinning_reserve,
-    )
-    from server.tasks import get_task, TASK_ORDER
-    from server.grader import (
-        EpisodeLog,
-        StepLog,
-        grade_episode,
-        grade_result_to_dict,
-        GradeResult,
-    )
+    try:
+        from energy_grid_openenv.server.simulator import (
+            GridSimState,
+            build_initial_state,
+            schedule_events,
+            simulator_step,
+            EVENT_DURATIONS,
+            HYDRO_RESERVOIR_CAP_MWH,
+            SPINNING_RESERVE_RATIO,
+            _compute_spinning_reserve,
+        )
+        from energy_grid_openenv.server.tasks import get_task, TASK_ORDER
+        from energy_grid_openenv.server.grader import (
+            EpisodeLog,
+            StepLog,
+            grade_episode,
+            grade_result_to_dict,
+            GradeResult,
+        )
+    except ImportError:
+        from server.simulator import (
+            GridSimState,
+            build_initial_state,
+            schedule_events,
+            simulator_step,
+            EVENT_DURATIONS,
+            HYDRO_RESERVOIR_CAP_MWH,
+            SPINNING_RESERVE_RATIO,
+            _compute_spinning_reserve,
+        )
+        from server.tasks import get_task, TASK_ORDER
+        from server.grader import (
+            EpisodeLog,
+            StepLog,
+            grade_episode,
+            grade_result_to_dict,
+            GradeResult,
+        )
 
 
 class EnergyGridEnvironment(Environment):
