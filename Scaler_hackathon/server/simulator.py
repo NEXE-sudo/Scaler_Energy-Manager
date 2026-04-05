@@ -1,9 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
-
 """
 Energy Grid Physics Simulator.
 
@@ -38,6 +32,8 @@ import random
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+from .tasks import TASKS
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -49,9 +45,11 @@ COAL_MAX_MW: float = 600.0          # nameplate capacity
 COAL_RAMP_MW: float = 100.0         # max ramp per step
 COAL_STARTUP_STEPS: int = 3         # steps to reach min-stable after restart
 COAL_EMISSION_FACTOR: float = 0.9   # tons CO2 per MWh
-COAL_EMERGENCY_BOOST_MW: float = 200.0   # instant boost above max
+COAL_EMERGENCY_BOOST_INCREMENT_MW: float = 100.0   # per-step ramp during boost
+COAL_EMERGENCY_BOOST_CEILING_MW: float = 150.0     # absolute MW above normal max_mw
 COAL_BOOST_DAMAGE_MW: float = 50.0       # max reduction after boost
 COAL_BOOST_DAMAGE_STEPS: int = 5         # steps damage lasts
+COAL_RESTART_COST: float = 0.5           # startup fuel penalty
 
 # Solar
 SOLAR_MAX_MW: float = 300.0
@@ -256,6 +254,8 @@ class GridSimState:
     demand_mw: float = 500.0
     transmission_capacity_mw: float = TRANSMISSION_NOMINAL_MW
     solar_weather: str = "clear"
+    prev_coal_delta: Optional[float] = None
+    coal_flip_streak: int = 0
 
     # Events
     active_events: List[str] = field(default_factory=list)
@@ -278,6 +278,15 @@ class GridSimState:
 
     # Random state (seeded per task for determinism)
     rng: random.Random = field(default_factory=random.Random)
+
+    # ---- Demand response tracking ----
+    total_demand_response: float = 0.0
+
+    # ---- Emergency usage tracking ----
+    boost_used_count: int = 0
+
+    # ---- Battery mode tracking ----
+    prev_battery_mode: str = "idle"
 
 
 # ---------------------------------------------------------------------------
@@ -435,8 +444,8 @@ def step_hydro(
     )
     actual_output = max(0.0, max_from_reservoir)
 
-    # Deplete reservoir
-    hydro_state.reservoir_mwh = max(0.0, hydro_state.reservoir_mwh - actual_output)
+    # Deplete reservoir (accounting for 87% efficiency)
+    hydro_state.reservoir_mwh = max(0.0, hydro_state.reservoir_mwh - (actual_output / 0.87))
 
     # Automatic spillage if near capacity
     if hydro_state.reservoir_mwh > HYDRO_SPILLAGE_THRESHOLD:
@@ -455,6 +464,7 @@ def step_coal(
     coal_state: CoalState,
     delta_mw: float,
     emergency_boost: bool,
+    state: Optional[GridSimState] = None,
 ) -> float:
     """
     Update coal plant output respecting ramp limits, startup sequence,
@@ -480,8 +490,8 @@ def step_coal(
 
     # Emergency boost (overrides normal ramp limits)
     if emergency_boost:
-        boost_target = coal_state.max_mw + COAL_EMERGENCY_BOOST_MW
-        coal_state.output_mw = min(boost_target, coal_state.output_mw + COAL_EMERGENCY_BOOST_MW)
+        boost_target = coal_state.max_mw + COAL_EMERGENCY_BOOST_CEILING_MW
+        coal_state.output_mw = min(boost_target, coal_state.output_mw + COAL_EMERGENCY_BOOST_INCREMENT_MW)
         # Apply damage
         coal_state.max_mw = max(
             COAL_MIN_MW,
@@ -495,10 +505,12 @@ def step_coal(
 
         # Enforce min-stable and max
         if new_output < COAL_MIN_MW:
-            # Shutting down below min-stable — start shutdown
+            # Shutting down below min-stable — start shutdown and deduct restart cost
             coal_state.online = False
             coal_state.output_mw = 0.0
             coal_state.startup_steps_remaining = COAL_STARTUP_STEPS
+            if state is not None:
+                state.cumulative_cost += COAL_RESTART_COST
             return 0.0
 
         coal_state.output_mw = min(new_output, coal_state.max_mw)
@@ -520,6 +532,10 @@ def step_nuclear(
 
     Extremely slow ramp. SCRAM drops output to zero immediately.
     Restart takes NUCLEAR_STARTUP_STEPS steps to reach minimum stable.
+    
+    Note: Nuclear is effectively baseload once online; the ramp exists only
+    for minor load-following. If online and delta would move output below
+    NUCLEAR_MIN_MW, the delta is clamped to zero.
     """
     if not nuclear_state.available:
         return 0.0
@@ -538,8 +554,11 @@ def step_nuclear(
             nuclear_state.output_mw = NUCLEAR_MIN_MW
         return nuclear_state.output_mw
 
-    # Normal ramp (very slow)
+    # Normal ramp (very slow) — guard against dropping below min-stable
     clamped_delta = max(-NUCLEAR_RAMP_MW, min(NUCLEAR_RAMP_MW, delta_mw))
+    if nuclear_state.output_mw + clamped_delta < NUCLEAR_MIN_MW:
+        # Clamp delta to zero if it would violate minimum stable
+        clamped_delta = 0.0
     new_output = nuclear_state.output_mw + clamped_delta
     nuclear_state.output_mw = max(NUCLEAR_MIN_MW, min(NUCLEAR_MAX_MW, new_output))
 
@@ -764,7 +783,9 @@ def schedule_events(
             add_event(rng.randint(0, total_steps - 1), "rainfall")
 
     if task_id == "hard":
-        # Coal plant outage
+        # Outage step is seeded-deterministic (seed=271 → step ~24), not truly random at runtime.
+        # The planner prompt says "steps 24–27" which matches this seed — do not change the seed
+        # without updating the prompt.
         add_event(rng.randint(20, 35), "coal_outage")
 
         # Nuclear trip (only if nuclear might be built)
@@ -957,6 +978,7 @@ def compute_reward(
     spillage_occurred: bool,
     task_id: str,
     feedin_mw: float = 0.0,
+    demand_response_mw: float = 0.0,
 ) -> float:
     """
     Compute step reward.
@@ -986,17 +1008,34 @@ def compute_reward(
     reward = 0.0
 
     # ---- Reliability ----
-    reward -= 0.10 * unmet
-    reward -= 0.002 * over
+    reward -= 0.25 * unmet          # prioritise reliability
+    reward -= 0.001 * over          # reduce oversupply penalty
 
     # ---- Frequency stability ----
-    reward -= 0.5 * freq_error
+    reward -= 0.2 * freq_error      # reduce frequency dominance
     if freq_error < 0.1:
         reward += 0.2   # bonus for very stable frequency
 
+    if demand_response_mw > 0 and task_id != "hard":
+        reward -= 0.05 * demand_response_mw  # soft penalty
+
+    if state.total_demand_response > 500:
+        reward -= 5.0
+
+    if unmet < 3 and over < 10:
+        reward += 0.2
+
+    # ---- Emergency boost penalty ----
+    reward -= 3.0 * (state.boost_used_count ** 1.5)
+
     # ---- Generation costs ----
     coal_mwh = state.coal.output_mw * (1.0 / 1.0)   # 1 step = 1 MWh equivalent
-    reward -= 0.001 * coal_mwh * state.coal_price
+    reward -= 0.003 * coal_mwh * state.coal_price
+
+    reward -= 0.001 * coal_mwh * COAL_EMISSION_FACTOR
+
+    if state.coal_flip_streak == 0 and unmet < 10:
+        reward += 0.05
 
     if state.nuclear.available and state.nuclear.online:
         nuclear_mwh = state.nuclear.output_mw
@@ -1016,7 +1055,7 @@ def compute_reward(
     cycle_delta = (battery_discharged_mw + battery_charged_mw) / max(
         1.0, state.battery.capacity_mwh
     )
-    reward -= 0.01 * cycle_delta
+    reward -= 0.005 * cycle_delta
 
     # ---- Spinning reserve shortfall ----
     reserve_shortfall = max(
@@ -1025,9 +1064,10 @@ def compute_reward(
     )
     reward -= 0.05 * reserve_shortfall / max(1.0, demand_mw)  # normalised
 
-    # ---- Emissions (Hard task only) ----
-    if task_id == "hard":
-        reward -= 0.0005 * coal_mwh * COAL_EMISSION_FACTOR
+    # ---- Oscillation penalty ----
+    # Penalise repeatedly hitting max or min ramp — signals instability
+    if state.coal_flip_streak >= 2:
+        reward -= 0.3 * state.coal_flip_streak
 
     return reward
 
@@ -1147,8 +1187,36 @@ def simulator_step(
         state.cumulative_feedin_credits += feedin_mw
 
     # 8. Coal
-    coal_out = step_coal(state.coal, coal_delta, emergency_coal_boost)
+
+    # ---- Hard cap on emergency boost usage ----
+    if state.boost_used_count >= 5:
+        emergency_coal_boost = False
+        import logging
+        logging.warning("Emergency coal boost blocked: boost_used_count >= 5")
+
+    # ---- Clamp delta FIRST (this is the actual applied control) ----
+    effective_coal_delta = max(-COAL_RAMP_MW, min(COAL_RAMP_MW, coal_delta))
+
+    # Apply coal dynamics using EFFECTIVE delta
+    coal_out = step_coal(state.coal, effective_coal_delta, emergency_coal_boost, state)
     state.coal.output_mw = coal_out
+
+    # ---- Oscillation tracking (use EFFECTIVE delta, not raw) ----
+    THRESHOLD = 10.0
+
+    if state.prev_coal_delta is not None:
+        if abs(effective_coal_delta) > THRESHOLD and abs(state.prev_coal_delta) > THRESHOLD:
+            if state.prev_coal_delta * effective_coal_delta < 0:
+                state.coal_flip_streak += 1
+            else:
+                state.coal_flip_streak = max(0, state.coal_flip_streak - 1)
+        else:
+            state.coal_flip_streak = max(0, state.coal_flip_streak - 1)
+
+    state.prev_coal_delta = effective_coal_delta
+
+    if emergency_coal_boost:
+        state.boost_used_count += 1
 
     # 9. Nuclear
     scram_nuclear = "nuclear_trip" in event_schedule.get(state.step, [])
@@ -1169,11 +1237,20 @@ def simulator_step(
     spillage_occurred = prev_reservoir > HYDRO_SPILLAGE_THRESHOLD
 
     # 11. Demand response (reduces effective demand)
-    dr_mw = min(demand_response_mw, 150.0, demand * 0.30)  # max 30% of demand
-    if dr_mw > 0 and task_id == "hard":
-        cost = dr_mw * DR_COST_PER_MW
-        state.capital_budget = max(0.0, state.capital_budget - cost)
-    effective_demand = max(0.0, demand - dr_mw)
+    dr_mw = min(demand_response_mw, 150.0, state.demand_mw * 0.30)
+
+    # Apply reduction
+    effective_demand = state.demand_mw - dr_mw
+
+    if task_id == "hard":
+        max_affordable_dr = state.capital_budget / DR_COST_PER_MW
+        dr_mw = min(dr_mw, max_affordable_dr)
+
+    # Track cumulative usage (only once, after capital affordability check)
+    state.total_demand_response += dr_mw
+
+    if task_id == "hard":
+        state.capital_budget -= dr_mw * DR_COST_PER_MW
 
     # 12. Battery
     passive_supply = solar_out + wind_out + coal_out + hydro_out + nuclear_out
@@ -1181,6 +1258,12 @@ def simulator_step(
     battery_discharged, battery_charged = step_battery(
         state.battery, battery_mode, shortfall
     )
+
+    # Track battery mode for oscillation detection
+    if battery_mode != state.prev_battery_mode and battery_mode != "idle" and state.prev_battery_mode != "idle":
+        # Direct switch between charge and discharge — apply cycle penalty
+        state.battery.total_cycles += 0.02
+    state.prev_battery_mode = battery_mode
 
     # 13. Net supply and imbalance
     total_supply = passive_supply + battery_discharged - battery_charged + feedin_mw
@@ -1219,6 +1302,7 @@ def simulator_step(
         spillage_occurred=spillage_occurred,
         task_id=task_id,
         feedin_mw=feedin_mw,
+        demand_response_mw=dr_mw,
     )
 
     # 18. Economics & emissions
@@ -1288,7 +1372,7 @@ def build_initial_state(
     if task_id == "easy":
         state.coal.output_mw = 400.0
         state.coal.online = True
-        state.battery.level_mwh = 100.0      # 50% charge
+        state.battery.level_mwh = TASKS[task_id]["battery_start_mwh"]
         state.capital_budget = 0.0
         # No renewables available
         state.solar.available = False
@@ -1299,18 +1383,19 @@ def build_initial_state(
     elif task_id == "medium":
         state.coal.output_mw = 400.0
         state.coal.online = True
-        state.battery.level_mwh = 80.0       # 40% charge
+        state.battery.level_mwh = TASKS[task_id]["battery_start_mwh"]
         state.capital_budget = 0.0
         state.solar.available = True
         state.wind.available = True
         state.hydro.available = False        # can't build in medium
         state.nuclear.available = False
-        state.hydro.reservoir_mwh = 600.0
+        # Hydro not available in medium — reservoir set to 0 to avoid misleading observation
+        state.hydro.reservoir_mwh = 0.0
 
     elif task_id == "hard":
         state.coal.output_mw = 350.0
         state.coal.online = True
-        state.battery.level_mwh = 60.0       # 30% charge — starts stressed
+        state.battery.level_mwh = TASKS[task_id]["battery_start_mwh"]
         state.capital_budget = 2000.0
         state.solar.available = True
         state.wind.available = True

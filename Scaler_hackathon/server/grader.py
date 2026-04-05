@@ -1,9 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
-
 """
 Deterministic grader for the Energy Grid Management Environment.
 
@@ -153,12 +147,13 @@ def score_cost_efficiency(log: EpisodeLog, task_id: str) -> float:
     """
     Normalised operational cost efficiency.
 
-    Score = 1.0 − (actual_cost / max_expected_cost), clamped to [0, 1].
+    Score = 1.0 − (actual_cost / max_expected_cost), clamped to [-0.2, 1.0].
     A perfectly optimised agent scores near 1.0; a wasteful one scores near 0.
+    Overspending beyond max_expected_cost produces negative scores.
     """
     max_cost = TASKS[task_id]["max_expected_cost"]
     normalised = log.total_cumulative_cost / max(0.01, max_cost)
-    return max(0.0, min(1.0, 1.0 - normalised))
+    return max(-0.2, min(1.0, 1.0 - normalised))
 
 
 def score_frequency(log: EpisodeLog) -> float:
@@ -312,6 +307,8 @@ def grade_episode(log: EpisodeLog) -> GradeResult:
     emissions = score_emissions(log)
     capital_eff = score_capital_efficiency(log)
 
+    # frequency_stability is computed for all tasks but only weighted in medium (via internal use)
+    # — it appears in component_scores for transparency but does not affect easy or hard totals.
     component_scores: Dict[str, float] = {
         "reliability": reliability,
         "cost_efficiency": cost_eff,
@@ -348,7 +345,13 @@ def grade_episode(log: EpisodeLog) -> GradeResult:
         }
 
     total_score = sum(weighted.values())
-    total_score = max(0.0, min(1.0, total_score))
+    total_score = max(-0.05, min(1.0, total_score))
+
+    # Explicitly add frequency_stability: 0.0 to weights for easy and hard tasks
+    # to reflect actual usage (computed but not weighted)
+    if task_id in ("easy", "hard"):
+        weights = dict(weights)  # make a copy
+        weights["frequency_stability"] = 0.0
 
     return GradeResult(
         task_id=task_id,

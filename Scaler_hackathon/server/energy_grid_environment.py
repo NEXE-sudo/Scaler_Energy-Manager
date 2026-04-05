@@ -1,9 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
-
 """
 Energy Grid Management Environment — OpenEnv Environment Implementation.
 
@@ -38,10 +32,7 @@ from openenv.core.env_server.types import State
 try:
     from ..models import EnergyGridAction, EnergyGridObservation
 except ImportError:
-    try:
-        from energy_grid_openenv.models import EnergyGridAction, EnergyGridObservation
-    except ImportError:
-        from models import EnergyGridAction, EnergyGridObservation
+    from models import EnergyGridAction, EnergyGridObservation
 
 try:
     from .simulator import (
@@ -63,44 +54,24 @@ try:
         GradeResult,
     )
 except ImportError:
-    try:
-        from energy_grid_openenv.server.simulator import (
-            GridSimState,
-            build_initial_state,
-            schedule_events,
-            simulator_step,
-            EVENT_DURATIONS,
-            HYDRO_RESERVOIR_CAP_MWH,
-            SPINNING_RESERVE_RATIO,
-            _compute_spinning_reserve,
-        )
-        from energy_grid_openenv.server.tasks import get_task, TASK_ORDER
-        from energy_grid_openenv.server.grader import (
-            EpisodeLog,
-            StepLog,
-            grade_episode,
-            grade_result_to_dict,
-            GradeResult,
-        )
-    except ImportError:
-        from server.simulator import (
-            GridSimState,
-            build_initial_state,
-            schedule_events,
-            simulator_step,
-            EVENT_DURATIONS,
-            HYDRO_RESERVOIR_CAP_MWH,
-            SPINNING_RESERVE_RATIO,
-            _compute_spinning_reserve,
-        )
-        from server.tasks import get_task, TASK_ORDER
-        from server.grader import (
-            EpisodeLog,
-            StepLog,
-            grade_episode,
-            grade_result_to_dict,
-            GradeResult,
-        )
+    from server.simulator import (
+        GridSimState,
+        build_initial_state,
+        schedule_events,
+        simulator_step,
+        EVENT_DURATIONS,
+        HYDRO_RESERVOIR_CAP_MWH,
+        SPINNING_RESERVE_RATIO,
+        _compute_spinning_reserve,
+    )
+    from server.tasks import get_task, TASK_ORDER
+    from server.grader import (
+        EpisodeLog,
+        StepLog,
+        grade_episode,
+        grade_result_to_dict,
+        GradeResult,
+    )
 
 
 class EnergyGridEnvironment(Environment):
@@ -141,6 +112,11 @@ class EnergyGridEnvironment(Environment):
     # ------------------------------------------------------------------
     # OpenEnv interface
     # ------------------------------------------------------------------
+
+    @property
+    def current_task_id(self) -> str:
+        """Return the current task_id for the active episode."""
+        return self._task_id
 
     def reset(self, task_id: str = "easy") -> EnergyGridObservation:
         """

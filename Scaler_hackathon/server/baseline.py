@@ -54,26 +54,14 @@ try:
     from .grader import grade_result_to_dict
     from .tasks import get_task, TASK_ORDER
 except ImportError:
-    try:
-        # If running as installed package
-        from energy_grid_openenv.server.energy_grid_environment import EnergyGridEnvironment
-        from energy_grid_openenv.server.grader import grade_result_to_dict
-        from energy_grid_openenv.server.tasks import get_task, TASK_ORDER
-    except ImportError:
-        # If running locally
-        from server.energy_grid_environment import EnergyGridEnvironment
-        from server.grader import grade_result_to_dict
-        from server.tasks import get_task, TASK_ORDER
+    from server.energy_grid_environment import EnergyGridEnvironment
+    from server.grader import grade_result_to_dict
+    from server.tasks import get_task, TASK_ORDER
 
 try:
     from ..models import EnergyGridAction, EnergyGridObservation
 except ImportError:
-    try:
-        # If running as installed package
-        from energy_grid_openenv.models import EnergyGridAction, EnergyGridObservation
-    except ImportError:
-        # If running locally
-        from models import EnergyGridAction, EnergyGridObservation
+    from models import EnergyGridAction, EnergyGridObservation
 
 # ---------------------------------------------------------------------------
 # Rate limiter — keeps requests within Groq TPM limits
@@ -104,20 +92,19 @@ def _build_client() -> tuple[OpenAI, str]:
     Required env vars:
         API_BASE_URL   – endpoint (e.g. https://api.groq.com/openai/v1)
         MODEL_NAME      – model identifier
-        HF_TOKEN / OPENAI_API_KEY / API_KEY – auth token
+        OPENAI_API_KEY / HF_TOKEN – auth token (checked in that priority order)
     """
     api_base_url = os.getenv("API_BASE_URL")
     model_name   = os.getenv("MODEL_NAME")
     api_key      = (
-        os.getenv("HF_TOKEN")
-        or os.getenv("OPENAI_API_KEY")
-        or os.getenv("API_KEY")
+        os.getenv("OPENAI_API_KEY")
+        or os.getenv("HF_TOKEN")
     )
 
     if not (api_base_url and model_name and api_key):
         raise EnvironmentError(
             "Missing required API configuration. Set API_BASE_URL, MODEL_NAME, "
-            "and an API key (HF_TOKEN / OPENAI_API_KEY / API_KEY)."
+            "and an API key (OPENAI_API_KEY or HF_TOKEN)."
         )
     client = OpenAI(api_key=api_key, base_url=api_base_url)
     return client, model_name
@@ -126,7 +113,7 @@ def _build_client() -> tuple[OpenAI, str]:
 # Token budget (small enough to force a complete ACTION line)
 # ---------------------------------------------------------------------------
 
-MAX_TOKENS = 4000  # enough for REASON + full JSON ACTION
+MAX_TOKENS = 512  # just JSON ACTION output, no REASON (saves tokens)
 
 # ---------------------------------------------------------------------------
 # Prompt builder
@@ -138,16 +125,10 @@ def _build_system_prompt(task_id: str = "easy", plan: str = "") -> str:
     For Hard task, injects the planner output.
     """
     # -------------------------------------------------------------------
-    # Compact prompt – ~500 tokens (still contains every hard constraint)
+    # Compact prompt – no REASON requirement (saves ~30% tokens)
     # -------------------------------------------------------------------
-    base = """You are an expert electricity grid operator. ALWAYS output exactly two lines:
-
-REASON: <one‑sentence explanation>
-ACTION: {"coal_delta":<-100..100>,"hydro_delta":<-80..80>,"nuclear_delta":<-10..10>,
-         "battery_mode":"charge|discharge|idle",
-         "plant_action":"none|build_solar|build_wind|build_hydro|build_nuclear|close_coal",
-         "emergency_coal_boost":true|false,
-         "demand_response_mw":<0..150>}
+    base = """You are an expert electricity grid operator. Output ONLY valid JSON ACTION:
+{"coal_delta":<-100..100>,"hydro_delta":<-80..80>,"nuclear_delta":<-10..10>,"battery_mode":"charge|discharge|idle","plant_action":"none|build_solar|build_wind|build_hydro|build_nuclear|close_coal","emergency_coal_boost":true|false,"demand_response_mw":<0..150>}
 
 Constraints:
 - Coal: min 200 MW, max 600 MW, ramp ±100 MW/step.
@@ -237,44 +218,28 @@ Be concise, decisive, and forward‑looking.
 # ---------------------------------------------------------------------------
 
 def _build_user_prompt(obs: EnergyGridObservation, task_id: str) -> str:
-    """Ultra-compact state: ~400 tokens instead of ~1000. Keeps only decision-critical fields."""
+    """Detailed state for model decision-making."""
     task = get_task(task_id)
-    
-    # Compact status line
-    alerts = []
-    if obs.unmet_demand_mw > 10: alerts.append(f"SHORT_{obs.unmet_demand_mw:.0f}")
-    if obs.blackout_risk in ("high", "critical"): alerts.append(f"RISK_{obs.blackout_risk.upper()}")
-    if obs.battery_level_mwh / max(1, obs.battery_capacity_mwh) < 0.15: alerts.append("BATT_LOW")
-    if obs.primary_response_active: alerts.append("GOV")
-    
-    alert_str = " ".join(alerts) if alerts else "OK"
-    
-    avail = ",".join(k for k in ["coal","solar","wind","hydro","nuclear"] 
-                     if (k=="coal" or getattr(obs, f"{k}_available", False)))
-    
     total = (obs.coal_output_mw + obs.solar_output_mw + obs.wind_output_mw + 
              obs.hydro_output_mw + obs.nuclear_output_mw)
     gap = obs.demand_mw - total
+    battery_pct = int(100*obs.battery_level_mwh/max(1,obs.battery_capacity_mwh))
     
-    # Single compact line format (all essential info)
-    prompt = (
-        f"S{obs.step}/{task['total_steps']} {task_id.upper()} "
-        f"D{obs.day} {obs.time_of_day:02d}:00 {obs.season} | "
-        f"Avail:{avail} | "
-        f"Demand:{obs.demand_mw:.0f} Unmet:{obs.unmet_demand_mw:.0f} "
-        f"[{alert_str}] | "
-        f"Coal:{obs.coal_output_mw:.0f}/{obs.coal_max_mw:.0f} "
-        f"Sol:{obs.solar_output_mw:.0f} "
-        f"Wind:{obs.wind_output_mw:.0f} "
-        f"Hydro:{obs.hydro_output_mw:.0f} "
-        f"Nuc:{obs.nuclear_output_mw:.0f} | "
-        f"Batt:{int(100*obs.battery_level_mwh/max(1,obs.battery_capacity_mwh))}% "
-        f"Freq:{obs.grid_frequency:.2f}Hz "
-        f"Steps:{task['total_steps']-obs.step} | "
-        f"REASON: <1 sentence decision> | "
-        f'ACTION: {{"coal_delta":<-100..100>,"hydro_delta":<-80..80>,"nuclear_delta":<-10..10>,"battery_mode":"idle|charge|discharge","plant_action":"none|...","emergency_coal_boost":false,"demand_response_mw":0}}'
+    return (
+        f"Step {obs.step}/{task['total_steps']} | "
+        f"Demand: {obs.demand_mw:.0f} MW | "
+        f"Generation: {total:.0f} MW | "
+        f"Unmet Demand: {obs.unmet_demand_mw:.0f} MW | "
+        f"Gap: {gap:+.0f} MW | "
+        f"Coal: {obs.coal_output_mw:.0f}/{obs.coal_max_mw:.0f} MW | "
+        f"Solar: {obs.solar_output_mw:.0f} MW | "
+        f"Wind: {obs.wind_output_mw:.0f} MW | "
+        f"Hydro: {obs.hydro_output_mw:.0f} MW | "
+        f"Nuclear: {obs.nuclear_output_mw:.0f} MW | "
+        f"Battery: {battery_pct}% ({obs.battery_level_mwh:.0f}/{obs.battery_capacity_mwh:.0f} MWh) | "
+        f"Frequency: {obs.grid_frequency:.2f} Hz | "
+        f"Risk: {obs.blackout_risk}"
     )
-    return prompt
 
 
 def _parse_action(response_text: str) -> EnergyGridAction:
@@ -406,12 +371,6 @@ def _apply_control_layer(
     if action.emergency_coal_boost and obs.coal_max_mw < 580.0:
         action.emergency_coal_boost = False
 
-    # Don't waste battery on small shortfalls coal can handle
-    if (action.battery_mode == "discharge"
-            and obs.unmet_demand_mw < 80.0
-            and obs.coal_output_mw < obs.coal_max_mw - 80.0):
-        action.battery_mode = "idle"
-
     return action
 
 # ---------------------------------------------------------------------------
@@ -423,16 +382,18 @@ def run_task(
     client: OpenAI,
     model: str,
     task_id: str,
-    max_steps_override: Optional[int] = None,
     verbose: bool = True,
 ) -> Dict[str, Any]:
     """
     Run one complete task episode with the LLM agent.
-    Hard task: planner at step 0, then executor with 4‑turn rolling history.
+    Hard task: planner at step 0, then executor with 4‑turn rolling history.
     Easy / Medium: single‑prompt executor with 4‑turn history.
     """
     task = get_task(task_id)
-    total_steps = max_steps_override or task["total_steps"]
+    total_steps = task["total_steps"]
+
+    # Emit structured log: START
+    print(f"[START] task={task_id} env=energy-grid-openenv model={model}", flush=True)
 
     if verbose:
         print("\n" + "=" * 60)
@@ -468,7 +429,9 @@ def run_task(
     total_reward = 0.0
     step_count = 0
     reason_log: List[str] = []
+
     conversation_history: List[Dict[str, str]] = []   # rolling 4‑turn window
+    rewards_list: List[float] = []  # Track all rewards for structured logging
 
     for step in range(total_steps):
         user_prompt = _build_user_prompt(obs, task_id)
@@ -486,18 +449,16 @@ def run_task(
             verbose=verbose,
         )
 
-        # Keep only the most recent 8 messages (4 turns)
-        conversation_history.append({"role": "assistant", "content": response_text})
-        if len(conversation_history) > 4:
-            conversation_history = conversation_history[-4:]
+        # # Stateless - no history kept, keeps prompt tokens minimal for 20min budget
+        conversation_history = []
 
         # Extract REASON for logging
-        reason_match = re.search(r"REASON\s*:\s*(.+?)(?:ACTION|$)", response_text, re.DOTALL)
-        if reason_match:
-            reason = reason_match.group(1).strip()[:120]
-            reason_log.append(f"Step {step:02d}: {reason}")
-            if verbose:
-                print(f"  Step {step:02d} | REASON: {reason}")
+        # reason_match = re.search(r"REASON\s*:\s*(.+?)(?:ACTION|$)", response_text, re.DOTALL)
+        # if reason_match:
+        #     reason = reason_match.group(1).strip()[:120]
+        #     reason_log.append(f"Step {step:02d}: {reason}")
+        #     if verbose:
+        #         print(f"  Step {step:02d} | REASON: {reason}")
 
         # Parse + sanitise action
         action = _parse_action(response_text)
@@ -505,17 +466,35 @@ def run_task(
         # Apply safety guards
         action = _apply_control_layer(action, obs)
 
-        if verbose:
-            print(
-                f"  Step {step:02d} | coal_delta={action.coal_delta:+.0f} "
-                f"battery={action.battery_mode} "
-                f"plant={action.plant_action} boost={action.emergency_coal_boost}"
-            )
-
         # Execute step
         obs = env.step(action)
-        total_reward += obs.step_reward
         step_count += 1
+        reward = obs.step_reward or 0.0
+        rewards_list.append(reward)
+
+        # Display detailed state after step
+        if verbose:
+            print(
+                f"  Step {step_count:02d} | "
+                f"coal_delta={action.coal_delta:+.0f} "
+                f"battery={action.battery_mode} "
+                f"plant={action.plant_action} | "
+                f"Coal: {obs.coal_output_mw:.0f}/{obs.coal_max_mw:.0f} MW | "
+                f"Demand: {obs.demand_mw:.0f} MW | "
+                f"Unmet: {obs.unmet_demand_mw:.0f} MW | "
+                f"Battery: {int(100*obs.battery_level_mwh/max(1,obs.battery_capacity_mwh))}% | "
+                f"Freq: {obs.grid_frequency:.2f} Hz | "
+                f"Reward: {reward:.2f}"
+            )
+
+        # Emit structured log: STEP
+        action_str = (
+            f"coal_delta={action.coal_delta:+.0f} "
+            f"battery_mode={action.battery_mode} "
+            f"plant_action={action.plant_action}"
+        )
+        print(f"[STEP] step={step_count} action={action_str} reward={reward:.2f}", flush=True)
+        time.sleep(5)
 
         last_action_summary = (
             f"LastAction: coal_delta={action.coal_delta:+.0f} "
@@ -523,13 +502,17 @@ def run_task(
             f"→ unmet={obs.unmet_demand_mw:.0f}MW freq={obs.grid_frequency:.3f}Hz"
         )
 
+        # Accumulate total reward (always, not just in verbose mode)
+        total_reward += reward
+
         if verbose:
             print(
-                f"           | demand={obs.demand_mw:.0f} MW "
-                f"unmet={obs.unmet_demand_mw:.0f} MW "
-                f"freq={obs.grid_frequency:.3f} Hz "
-                f"reward={obs.step_reward:.3f} "
-                f"risk={obs.blackout_risk}"
+                f"           | Demand={obs.demand_mw:.0f}MW Unmet={obs.unmet_demand_mw:.0f}MW "
+                f"Coal={obs.coal_output_mw:.0f}/{obs.coal_max_mw:.0f}MW "
+                f"Solar={obs.solar_output_mw:.0f}MW Wind={obs.wind_output_mw:.0f}MW "
+                f"Hydro={obs.hydro_output_mw:.0f}MW Nuc={obs.nuclear_output_mw:.0f}MW "
+                f"Batt={int(100*obs.battery_level_mwh/max(1,obs.battery_capacity_mwh))}% "
+                f"Freq={obs.grid_frequency:.3f}Hz | Step Reward={reward:.2f} | Total Reward={total_reward:.2f} | Risk={obs.blackout_risk}"
             )
 
         if obs.done:
@@ -547,6 +530,13 @@ def run_task(
     if grade is None:
         grade = env.grade_current_episode() or {}
 
+    # Emit structured log: END
+    score = grade.get("total_score", 0.0)
+    success = score >= 0.5  # threshold for "success"
+    success_str = str(success).lower()
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards_list)
+    print(f"[END] success={success_str} steps={step_count} score={score:.3f} rewards={rewards_str}", flush=True)
+
     if verbose:
         print("\n  📊 GRADE:", grade.get("total_score", 0.0))
         print("  Components:", grade.get("component_scores", {}))
@@ -555,7 +545,7 @@ def run_task(
     return {
         "task_id": task_id,
         "task_name": task["name"],
-        "score": grade.get("total_score", 0.0),
+        "score": score,
         "component_scores": grade.get("component_scores", {}),
         "weighted_components": grade.get("weighted_components", {}),
         "blackout_occurred": grade.get("blackout_occurred", False),
@@ -637,7 +627,6 @@ def _call_llm_with_retry(
 
 def run_baseline_agent(
     task_ids: Optional[List[str]] = None,
-    max_steps_override: Optional[int] = None,
     verbose: bool = True,
 ) -> Dict[str, Any]:
     """
@@ -672,7 +661,6 @@ def run_baseline_agent(
             client=client,
             model=model,
             task_id=task_id,
-            max_steps_override=max_steps_override,
             verbose=verbose,
         )
         results[task_id] = result
@@ -744,12 +732,7 @@ if __name__ == "__main__":
         choices=["easy", "medium", "hard"],
         help="Tasks to run (default: all three)",
     )
-    parser.add_argument(
-        "--max-steps",
-        type=int,
-        default=None,
-        help="Override episode length (useful for quick tests)",
-    )
+
     parser.add_argument(
         "--quiet",
         action="store_true",
@@ -766,7 +749,6 @@ if __name__ == "__main__":
 
     results = run_baseline_agent(
         task_ids=args.tasks,
-        max_steps_override=args.max_steps,
         verbose=not args.quiet,
     )
 

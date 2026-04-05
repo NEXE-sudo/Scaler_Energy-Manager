@@ -4,12 +4,17 @@ Energy Grid OpenEnv Baseline Inference Script
 
 This script is required by the Scaler x OpenEnv Hackathon Phase 1 validation.
 It runs the baseline LLM agent against all three energy grid tasks and outputs
-reproducible scores.
+reproducible scores in the mandatory structured format.
 
 Required environment variables:
     API_BASE_URL  — The API endpoint for the LLM (e.g., https://api.groq.com/openai/v1)
     MODEL_NAME    — The model identifier to use (e.g., llama-3.3-70b-versatile)
     HF_TOKEN      — Your Hugging Face / API authentication key
+
+STDOUT FORMAT (MANDATORY):
+    [START] task=<task_id> env=energy-grid-openenv model=<model_name>
+    [STEP] step=<n> action=<action_str> reward=<0.00> done=<true|false> error=<msg|null>
+    [END] success=<true|false> steps=<n> score=<score> rewards=<r1,r2,...,rn>
 
 Usage:
     export API_BASE_URL="https://api.groq.com/openai/v1"
@@ -29,82 +34,43 @@ from server.baseline import run_baseline_agent
 
 
 def main() -> int:
-    """Run baseline agent and display results."""
+    """Run baseline agent on all tasks with structured logging."""
     
     # Validate required environment variables
     api_base_url = os.getenv("API_BASE_URL")
     model_name = os.getenv("MODEL_NAME")
-    hf_token = os.getenv("HF_TOKEN") or os.getenv("API_KEY") or os.getenv("OPENAI_API_KEY")
+    hf_token = os.getenv("API_KEY") or os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY")
     
     if not api_base_url or not model_name or not hf_token:
-        print("ERROR: Missing required environment variables")
-        print()
-        print("Required:")
-        print("  API_BASE_URL  — API endpoint (e.g., https://api.groq.com/openai/v1)")
-        print("  MODEL_NAME    — Model identifier (e.g., llama-3.3-70b-versatile)")
-        print("  HF_TOKEN      — Authentication key (also accepts OPENAI_API_KEY or API_KEY)")
-        print()
-        print("Set them with:")
-        print("  export API_BASE_URL='...'")
-        print("  export MODEL_NAME='...'")
-        print("  export HF_TOKEN='...'")
+        print("ERROR: Missing required environment variables", flush=True)
+        print("Required:", flush=True)
+        print("  API_BASE_URL  — API endpoint", flush=True)
+        print("  MODEL_NAME    — Model identifier", flush=True)
+        print("  HF_TOKEN      — Authentication key", flush=True)
         return 1
     
-    print("=" * 70)
-    print("Energy Grid OpenEnv — Baseline Inference")
-    print("=" * 70)
-    print()
-    print(f"Configuration:")
-    print(f"  API Base: {api_base_url}")
-    print(f"  Model:    {model_name}")
-    print()
+    # Debug: Show what was read
+    print(f"[DEBUG] API_BASE_URL={api_base_url}", flush=True)
+    print(f"[DEBUG] MODEL_NAME={model_name}", flush=True)
+    print(f"[DEBUG] HF_TOKEN set: {bool(hf_token)}", flush=True)
     
-    # Bridge environment variables to baseline agent
-    os.environ["BASELINE_BASE_URL"] = api_base_url
-    os.environ["BASELINE_MODEL"] = model_name
-    os.environ["GROQ_API_KEY"] = hf_token
-    os.environ["OPENAI_API_KEY"] = hf_token
+    # Bridge environment variables (API key handling will be in baseline.py)
+    os.environ["API_BASE_URL"] = api_base_url
+    os.environ["MODEL_NAME"] = model_name
+    os.environ["HF_TOKEN"] = hf_token
     
     # Run baseline agent on all three tasks
+    # (Will emit structured logs directly from run_baseline_agent)
     try:
-        print("Running baseline agent on all tasks...")
-        print("-" * 70)
         results = run_baseline_agent(
             task_ids=["easy", "medium", "hard"],
-            verbose=True
+            verbose=True  # Show detailed output including REASON, state changes, cumulative rewards
         )
         
-        # Display summary
-        print()
-        print("=" * 70)
-        print("RESULTS SUMMARY")
-        print("=" * 70)
-        
-        total_score = 0.0
-        task_count = len(results.get("results", {}))
-        
-        for task_id, result in results.get("results", {}).items():
-            score = result.get("score", 0.0)
-            total_score += score
-            print(f"  {task_id.upper():8s}: {score:.4f}")
-        
-        if task_count > 0:
-            avg_score = total_score / task_count
-            print("-" * 70)
-            print(f"  AVERAGE  : {avg_score:.4f}")
-        
-        print("=" * 70)
-        print()
-        print("✓ Inference completed successfully")
         return 0
         
     except Exception as e:
-        print()
-        print("=" * 70)
-        print("ERROR DURING INFERENCE")
-        print("=" * 70)
-        print(f"  {e}")
-        print()
+        print(f"[ERROR] Inference failed: {e}", flush=True)
         import traceback
         traceback.print_exc()
         return 2
@@ -112,3 +78,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

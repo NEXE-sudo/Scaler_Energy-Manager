@@ -1,9 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
-
 """
 Task definitions for the Energy Grid Management Environment.
 
@@ -24,6 +18,7 @@ long-horizon plant investment decisions, and competing objectives.
 from __future__ import annotations
 
 from typing import Any, Dict
+from .simulator import PLANT_BUILD_SPECS
 
 # ---------------------------------------------------------------------------
 # Task registry
@@ -111,11 +106,10 @@ TASKS: Dict[str, Dict[str, Any]] = {
         "capital_budget": 0.0,
         "coal_start_mw": 400.0,
         "grader_weights": {
-            "reliability": 0.50,
-            "cost_efficiency": 0.25,
-            "reservoir_management": 0.15,   # hydro not available but
-                                            # reservoir tracks battery proxy
+            "reliability": 0.60,
+            "cost_efficiency": 0.30,
             "battery_health": 0.10,
+            "reservoir_management": 0.00,      # no hydro in medium task
             "capital_efficiency": 0.00,
             "emissions": 0.00,
         },
@@ -245,22 +239,15 @@ def get_tasks_summary() -> list[Dict[str, Any]]:
 # Plant build reference (exposed via /tasks for agent reference)
 # ---------------------------------------------------------------------------
 
-PLANT_BUILD_REFERENCE: Dict[str, Dict[str, Any]] = {
+# Plant build descriptive notes (references; specs are in simulator.py PLANT_BUILD_SPECS)
+PLANT_BUILD_NOTES: Dict[str, Dict[str, str]] = {
     "solar": {
-        "action": "build_solar",
-        "cost_units": 500,
-        "build_steps": 8,
-        "capacity_mw": 300,
-        "fuel_cost": 0,
+        "fuel_cost": "0",
         "inertia_contribution": "none (inverter-based)",
         "notes": "Output 0 MW at night. Reduced by cloud/storm events.",
     },
     "wind": {
-        "action": "build_wind",
-        "cost_units": 400,
-        "build_steps": 6,
-        "capacity_mw": 250,
-        "fuel_cost": 0,
+        "fuel_cost": "0",
         "inertia_contribution": "none (inverter-based)",
         "notes": (
             "24/7 availability but stochastic. Output follows cubic wind "
@@ -268,11 +255,7 @@ PLANT_BUILD_REFERENCE: Dict[str, Dict[str, Any]] = {
         ),
     },
     "hydro": {
-        "action": "build_hydro",
-        "cost_units": 600,
-        "build_steps": 10,
-        "capacity_mw": 200,
-        "fuel_cost": 0,
+        "fuel_cost": "0",
         "inertia_contribution": "high (synchronous machine)",
         "notes": (
             "Dispatchable renewable. Reservoir depletes with generation. "
@@ -280,16 +263,45 @@ PLANT_BUILD_REFERENCE: Dict[str, Dict[str, Any]] = {
         ),
     },
     "nuclear": {
-        "action": "build_nuclear",
-        "cost_units": 1000,
-        "build_steps": 15,
-        "capacity_mw": 500,
-        "fuel_cost": 0.05,
+        "fuel_cost": "0.05",
         "inertia_contribution": "very high (synchronous machine)",
         "notes": (
             "Cheapest per MWh once running. Minimum stable output 300 MW "
             "— cannot be turned off. SCRAM event drops output to 0 for "
             "8 steps. Cannot be decommissioned."
         ),
+    },
+}
+
+# Generate PLANT_BUILD_REFERENCE from PLANT_BUILD_SPECS (authoritative source)
+# and augment with descriptive notes from PLANT_BUILD_NOTES
+PLANT_BUILD_REFERENCE: Dict[str, Dict[str, Any]] = {
+    "solar": {
+        "action": "build_solar",
+        "cost_units": PLANT_BUILD_SPECS["build_solar"]["cost"],
+        "build_steps": PLANT_BUILD_SPECS["build_solar"]["build_steps"],
+        "capacity_mw": PLANT_BUILD_SPECS["build_solar"]["capacity_mw"],
+        **PLANT_BUILD_NOTES["solar"],
+    },
+    "wind": {
+        "action": "build_wind",
+        "cost_units": PLANT_BUILD_SPECS["build_wind"]["cost"],
+        "build_steps": PLANT_BUILD_SPECS["build_wind"]["build_steps"],
+        "capacity_mw": PLANT_BUILD_SPECS["build_wind"]["capacity_mw"],
+        **PLANT_BUILD_NOTES["wind"],
+    },
+    "hydro": {
+        "action": "build_hydro",
+        "cost_units": PLANT_BUILD_SPECS["build_hydro"]["cost"],
+        "build_steps": PLANT_BUILD_SPECS["build_hydro"]["build_steps"],
+        "capacity_mw": PLANT_BUILD_SPECS["build_hydro"]["capacity_mw"],
+        **PLANT_BUILD_NOTES["hydro"],
+    },
+    "nuclear": {
+        "action": "build_nuclear",
+        "cost_units": PLANT_BUILD_SPECS["build_nuclear"]["cost"],
+        "build_steps": PLANT_BUILD_SPECS["build_nuclear"]["build_steps"],
+        "capacity_mw": PLANT_BUILD_SPECS["build_nuclear"]["capacity_mw"],
+        **PLANT_BUILD_NOTES["nuclear"],
     },
 }

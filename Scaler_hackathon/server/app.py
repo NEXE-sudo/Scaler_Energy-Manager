@@ -1,9 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
-
 """
 FastAPI application for the Energy Grid Management Environment.
 
@@ -38,8 +32,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import traceback
+import warnings
 from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException
@@ -103,7 +99,6 @@ class BaselineRequest(BaseModel):
     If tasks is empty, all three tasks are run.
     """
     tasks: list[str] = []
-    max_steps_override: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +113,24 @@ def get_http_env() -> EnergyGridEnvironment:
     global _http_env
     if _http_env is None:
         _http_env = EnergyGridEnvironment()
+        workers = os.getenv("WEB_CONCURRENCY")
+        if workers and int(workers) > 1:
+            warnings.warn(
+                "_http_env is process-local. With multiple uvicorn workers, "
+                "/grader results may not match the session that ran /reset and /step. "
+                "Use a single worker or WebSocket sessions for reliable grading."
+            )
     return _http_env
+
+
+# ---------------------------------------------------------------------------
+# /reset (GET) — health ping endpoint
+# ---------------------------------------------------------------------------
+
+@app.get("/reset", include_in_schema=False)
+async def reset_ping() -> JSONResponse:
+    """Health ping endpoint — validators use GET /reset to check liveness."""
+    return JSONResponse(content={"status": "ok"})
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +187,13 @@ async def get_tasks() -> JSONResponse:
 )
 async def grade_episode(request: GraderRequest = GraderRequest()) -> JSONResponse:
     env = get_http_env()
+
+    # Validate task_id if provided
+    if request.task_id and request.task_id != env.current_task_id:
+        raise HTTPException(
+            status_code=400,
+            detail="task_id does not match the active episode",
+        )
 
     # Try completed grade first
     grade = env.get_last_grade()
@@ -242,7 +261,6 @@ async def run_baseline(request: BaselineRequest = BaselineRequest()) -> JSONResp
         results = await asyncio.to_thread(
             run_baseline_agent,
             task_ids=task_ids,
-            max_steps_override=request.max_steps_override,
         )
 
         return JSONResponse(
@@ -297,7 +315,7 @@ async def root():
 # Entry point
 # ---------------------------------------------------------------------------
 
-def main(host: str = "0.0.0.0", port: int = 8000) -> None:
+def main(host: str = "0.0.0.0", port: int = None) -> None:
     """
     Entry point for direct execution.
 
@@ -306,6 +324,8 @@ def main(host: str = "0.0.0.0", port: int = 8000) -> None:
         python -m server.app
     """
     import uvicorn
+    if port is None:
+        port = int(os.environ.get("PORT", 7860))
     uvicorn.run(app, host=host, port=port)
 
 

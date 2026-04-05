@@ -1,9 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
-
 """
 Data models for the Energy Grid Management Environment.
 
@@ -13,7 +7,7 @@ sources (coal, solar, wind, hydro, nuclear), battery storage, grid
 frequency, hydro reservoir, plant construction queue, and economics.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 from pydantic import Field, field_validator
 from openenv.core.env_server.types import Action, Observation
 
@@ -238,7 +232,7 @@ class EnergyGridObservation(Observation):
         default=True,
         description="Whether solar panels are installed.",
     )
-    solar_weather: str = Field(
+    solar_weather: Literal["clear", "partial", "cloudy", "storm"] = Field(
         default="clear",
         description=(
             "Current solar weather condition: "
