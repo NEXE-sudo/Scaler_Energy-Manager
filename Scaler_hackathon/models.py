@@ -271,7 +271,7 @@ class EnergyGridObservation(Observation):
         description="Whether the hydro plant is installed.",
     )
     reservoir_level_mwh: float = Field(
-        default=600.0,
+        default=0.0,
         description="Current hydro reservoir water level (MWh equivalent).",
     )
     reservoir_capacity_mwh: float = Field(
@@ -413,6 +413,13 @@ class EnergyGridObservation(Observation):
             "Possible values: 'heatwave', 'cold_snap', 'cloud', 'heavy_cloud', "
             "'storm', 'calm', 'rainfall', 'drought', 'coal_outage', "
             "'nuclear_trip', 'price_spike', 'grid_fault'."
+        ),
+    )
+    solar_weather: Literal["clear", "partial", "cloudy", "storm"] = Field(
+        default="clear",
+        description=(
+            "Current solar irradiance condition. "
+            "'clear' = full output, 'partial' = 60%, 'cloudy' = 30%, 'storm' = 0%."
         ),
     )
 

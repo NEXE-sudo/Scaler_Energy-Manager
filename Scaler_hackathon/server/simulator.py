@@ -32,8 +32,6 @@ import random
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from .tasks import TASKS
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -1372,7 +1370,7 @@ def build_initial_state(
     if task_id == "easy":
         state.coal.output_mw = 400.0
         state.coal.online = True
-        state.battery.level_mwh = TASKS[task_id]["battery_start_mwh"]
+        state.battery.level_mwh = 100.0  # from TASKS["easy"]["battery_start_mwh"] — keep in sync with tasks.py
         state.capital_budget = 0.0
         # No renewables available
         state.solar.available = False
@@ -1383,7 +1381,7 @@ def build_initial_state(
     elif task_id == "medium":
         state.coal.output_mw = 400.0
         state.coal.online = True
-        state.battery.level_mwh = TASKS[task_id]["battery_start_mwh"]
+        state.battery.level_mwh = 80.0  # from TASKS["medium"]["battery_start_mwh"] — keep in sync with tasks.py
         state.capital_budget = 0.0
         state.solar.available = True
         state.wind.available = True
@@ -1395,7 +1393,7 @@ def build_initial_state(
     elif task_id == "hard":
         state.coal.output_mw = 350.0
         state.coal.online = True
-        state.battery.level_mwh = TASKS[task_id]["battery_start_mwh"]
+        state.battery.level_mwh = 60.0  # from TASKS["hard"]["battery_start_mwh"] — keep in sync with tasks.py
         state.capital_budget = 2000.0
         state.solar.available = True
         state.wind.available = True
