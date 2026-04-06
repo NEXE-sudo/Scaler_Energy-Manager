@@ -3,7 +3,7 @@
 Baseline inference script for the Energy Grid Management Environment.
 
 Architecture:
-    Easy / Medium — executor with 4‑turn rolling conversation history.
+    Easy / Medium — executor (stateless, no conversation history).
     Hard          — one‑shot strategic planner at episode start, then
                     executor with plan injected into every system prompt.
 
@@ -444,28 +444,20 @@ def run_task(
     total_reward = 0.0
     step_count = 0
     reason_log: List[str] = []
-
-    conversation_history: List[Dict[str, str]] = []   # rolling 4‑turn window
     rewards_list: List[float] = []  # Track all rewards for structured logging
 
     for step in range(total_steps):
         user_prompt = _build_user_prompt(obs, task_id)
 
-        # Append current state to history
-        conversation_history.append({"role": "user", "content": user_prompt})
-
-        # LLM call
+        # LLM call — stateless, no conversation history
         response_text = _call_llm_with_retry(
             client=client,
             model=model,
             system=system_prompt,
-            messages=conversation_history,
+            messages=[{"role": "user", "content": user_prompt}],
             max_retries=2,  # faster failure recovery
             verbose=verbose,
         )
-
-        # # Stateless - no history kept, keeps prompt tokens minimal for 20min budget
-        conversation_history = []
 
         # Extract REASON for logging
         # reason_match = re.search(r"REASON\s*:\s*(.+?)(?:ACTION|$)", response_text, re.DOTALL)
