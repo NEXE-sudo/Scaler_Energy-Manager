@@ -581,6 +581,7 @@ SUMMARY
 ```
 
 **Key Observations:**
+
 - **Easy task**: Completed all 24 steps without blackout, but low score (0.18) due to high emissions and cost inefficiency
 - **Medium task**: Failed early with blackout at step 7 — insufficient renewable capacity despite building solar + wind
 - **Hard task**: Failed at step 26, likely during coal outage period (steps 23–25) when battery depleted
@@ -631,21 +632,23 @@ Results are automatically saved to `outputs/baseline_<timestamp>.json`:
 
 ## Baseline Scores
 
-| Task        | Score    | Steps    | Blackout | Model                   | Date       | Notes                             |
-| ----------- | -------- | -------- | -------- | ----------------------- | ---------- | --------------------------------- |
-| Easy        | **0.18** | 24/24    | No       | llama-3.3-70b-versatile | 2026-04-02 | Completed but high emissions      |
-| Medium      | **0.39** | 7/48     | **Yes**  | llama-3.3-70b-versatile | 2026-04-02 | Early failure, insufficient cap   |
-| Hard        | **0.37** | 26/72    | **Yes**  | llama-3.3-70b-versatile | 2026-04-02 | Fails during coal outage          |
-| **Average** | **0.31** | —        | —        |                         | 2026-04-02 | All three tasks                   |
+| Task        | Score    | Steps | Blackout | Model                   | Date       | Notes                           |
+| ----------- | -------- | ----- | -------- | ----------------------- | ---------- | ------------------------------- |
+| Easy        | **0.18** | 19/24 | **Yes**  | llama-3.3-70b-versatile | 2026-04-07 | Blackout at step 18             |
+| Medium      | **0.23** | 21/48 | **Yes**  | llama-3.3-70b-versatile | 2026-04-07 | Blackout at step 20             |
+| Hard        | **0.33** | 2/72  | **Yes**  | llama-3.3-70b-versatile | 2026-04-07 | Blackout at step 1              |
+| **Average** | **0.25** | —     | —        |                         | 2026-04-07 | All three tasks                 |
 
-**Results file:** `outputs/baseline_20260402_221415.json`
+**Results file:** `outputs/baseline_20260407_031508.json`
 
 **Analysis:**
-- Average score of 0.31 is representative of frontier LLM performance on this task
-- Easy task passable without blackout but inefficient (high emissions)
-- Medium/hard tasks fail due to insufficient multi-step planning
-- Agent builds plants but timing is suboptimal
-- Stateless agent struggles with 48/72-step horizons
+
+- Average score of 0.25 shows stateless agent quickly exhausts coal capacity
+- All three tasks end with blackout — agent lacks multi-step planning to build capacity
+- Easy task fails managing demand spikes without reserve plants
+- Medium task fails managing summer peak demand (1000+ MW)
+- Hard task fails immediately at step 1 due to frequency instability
+- Stateless approach insufficient; frontier LLMs need planning + memory for >10 step horizons
 
 Run `python server/baseline.py` to reproduce or benchmark your improvements.
 
