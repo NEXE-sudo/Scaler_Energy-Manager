@@ -22,12 +22,36 @@ class EnergyGridAction(Action):
 
     The agent controls dispatchable generation (coal, hydro, nuclear),
     battery storage mode, optional plant construction, and emergency /
-    demand-response tools.  Solar and wind output are weather-driven and
+    demand-response tools. Solar and wind output are weather-driven and
     cannot be directly controlled.
 
     All MW deltas are clamped inside the simulator to physical limits, so
     the agent never needs to worry about exceeding ramp-rate constraints —
     but exceeding them consistently will cost reward.
+
+    ACTION SPACE DESIGN RATIONALE:
+    
+    Dispatchable Controls (coal_delta, hydro_delta, nuclear_delta):
+    - Use small integer-like ranges (±100, ±80, ±10 MW) that map to hourly timesteps
+    - Coal ±100 MW: realistic large steam generator ramp (~100 MW/min physically)
+    - Hydro ±80 MW: faster response, typical pump-hydro capability
+    - Nuclear ±10 MW: intentionally slow (10 hrs to full ramp) to reflect physics
+    - Scaling ensures agents learn stable dispatch patterns without granular tuning
+    
+    Battery Mode (categorical):
+    - Three discrete states (charge/discharge/idle) for simplicity
+    - Charge/discharge: fixed 50 MW rate (symmetric, learnable)
+    - Prevents overfitting to continuous values; models real plant behavior
+    
+    Plant Investment (categorical, hard task only):
+    - Discrete build actions (build_solar, build_wind, build_hydro, build_nuclear)
+    - Agents must plan ahead ~10–15 steps (plant build times)
+    - Forces multi-horizon reasoning beyond myopic dispatch
+    
+    Emergency Tools:
+    - emergency_coal_boost: one-step damage potential for blackout prevention
+    - demand_response_mw: continuous [0, 150] — agents learn capital-aware DR
+    - Both have step-by-step costs to prevent exploitation
     """
 
     # ------------------------------------------------------------------
@@ -40,6 +64,8 @@ class EnergyGridAction(Action):
         description=(
             "Change in coal plant output this step (MW). "
             "Range: -100 to +100 MW. "
+            "Physical justification: Industrial steam plants ramp at ~100 MW/min. "
+            "Limiting to ±100 MW per step (hour) represents realistic ramp-rate constraints. "
             "Clamped to min-stable (200 MW) and max (600 MW) in simulator. "
             "Plant must be online; ignored during startup sequence."
         ),

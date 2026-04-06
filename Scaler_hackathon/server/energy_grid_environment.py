@@ -118,15 +118,24 @@ class EnergyGridEnvironment(Environment):
         """Return the current task_id for the active episode."""
         return self._task_id
 
-    def reset(self, task_id: str = "easy") -> EnergyGridObservation:
+    def reset(self, task_id: str = "easy", seed: int = None) -> EnergyGridObservation:
         """
         Reset the environment for a new episode.
 
         Args:
             task_id: One of 'easy', 'medium', 'hard'.
+            seed: Optional random seed override. If None, uses task default seed.
+                  Set to a different value to generate episode variant with same
+                  task parameters but different stochastic events (weather,
+                  failures, prices). Useful for robustness evaluation.
 
         Returns:
             Initial EnergyGridObservation with starting grid state.
+            
+        Example:
+            >>> env = EnergyGridEnvironment()
+            >>> obs = env.reset("medium", seed=42)  # Variant of medium task
+            >>> obs = env.reset("medium", seed=100) # Different variant
         """
         if task_id not in TASK_ORDER:
             task_id = "easy"
@@ -137,10 +146,13 @@ class EnergyGridEnvironment(Environment):
         # Fresh OpenEnv state
         self._state = State(episode_id=str(uuid4()), step_count=0)
 
+        # Build physics state with optional seed override
+        episode_seed = seed if seed is not None else task["seed"]
+
         # Build physics state
         self._sim = build_initial_state(
             task_id=task_id,
-            seed=task["seed"],
+            seed=episode_seed,
             total_steps=task["total_steps"],
             season=task["season"],
         )
