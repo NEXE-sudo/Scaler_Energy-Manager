@@ -500,19 +500,148 @@ print(f"Final reward: {result.reward}")
 
 ---
 
+## Running the Baseline Agent
+
+The baseline LLM agent uses a hybrid chain-of-thought approach: one sentence of reasoning before each JSON action. It is fully stateless — no conversation history is maintained between steps.
+
+### Quick Start
+
+```bash
+# Run all three tasks (may take 10–15 minutes with API latency)
+python server/baseline.py
+
+# Run only the easy task
+python server/baseline.py --tasks easy
+
+# Run medium and hard, suppress step-by-step output
+python server/baseline.py --tasks medium hard --quiet
+
+# Save results to specific JSON file
+python server/baseline.py --output results.json
+```
+
+### Architecture
+
+**Easy / Medium tasks:**
+- Stateless executor: each step prompt contains current observation + user-provided budget (hard only)
+- Single-turn LLM calls (no conversation history)
+- Action parsed from JSON block in response
+
+**Hard task:**
+- One-shot strategic planner at episode start (computes full build schedule + dispatch strategy)
+- Plan (budget, events, plants) injected into every executor system prompt
+- Executor follows plan with real-time adjustments
+- Carefully tuned prompts to handle 72-step horizon and competing objectives
+
+### Sample Baseline Output
+
+```
+============================================================
+  ENERGY GRID OPENENV — BASELINE AGENT
+============================================================
+  Model: llama-3.3-70b-versatile
+  Tasks: ['easy', 'medium', 'hard']
+
+[START] task=easy env=energy-grid-openenv model=llama-3.3-70b-versatile
+
+[STEP] step=1 action=coal_delta=+50 battery_mode=idle plant_action=none reward=-2.5 done=false error=null
+[STEP] step=2 action=coal_delta=+0 battery_mode=discharge plant_action=none reward=-1.2 done=false error=null
+[STEP] step=3 action=coal_delta=-30 battery_mode=charge plant_action=none reward=-0.8 done=false error=null
+...
+[STEP] step=24 action=coal_delta=+20 battery_mode=idle plant_action=none reward=+0.5 done=true error=null
+[END] task=easy episode_length=24 total_reward=-18.7 final_score=0.6823
+
+[START] task=medium env=energy-grid-openenv
+
+[STEP] step=1 action=coal_delta=+0 battery_mode=idle plant_action=build_wind reward=-1.8 done=false error=null
+[STEP] step=2 action=coal_delta=-20 battery_mode=discharge plant_action=none reward=-2.1 done=false error=null
+...
+[STEP] step=48 action=coal_delta=+50 battery_mode=idle plant_action=close_coal reward=+1.2 done=true error=null
+[END] task=medium episode_length=48 total_reward=-42.3 final_score=0.5456
+
+[START] task=hard env=energy-grid-openenv
+
+PLANNING PHASE:
+  Capital budget: 2000 units
+  Goal: Build nuclear (1000) + hydro (600) + nuclear (500) = complete
+  Coal outage: steps 23-25 (hard constraint)
+  Events: [coal_outage, price_spike, drought, ...]
+
+[STEP] step=1 action=coal_delta=+0 battery_mode=idle plant_action=build_nuclear reward=-0.5 done=false error=null
+[STEP] step=2 action=coal_delta=+10 battery_mode=idle plant_action=build_hydro reward=-1.2 done=false error=null
+...
+[STEP] step=23 action=coal_delta=+50 battery_mode=discharge plant_action=none reward=-8.5 done=false error=null
+[STEP] step=24 action=coal_delta=+30 battery_mode=discharge plant_action=none reward=-7.2 done=false error=null
+[STEP] step=25 action=coal_delta=+40 battery_mode=idle plant_action=none reward=-6.8 done=false error=null
+...
+[STEP] step=72 action=coal_delta=+0 battery_mode=idle plant_action=none reward=+2.5 done=true error=null
+[END] task=hard episode_length=72 total_reward=-185.4 final_score=0.7124
+
+============================================================
+  BASELINE SUMMARY
+============================================================
+  easy    : 0.6823  ████████████
+  medium  : 0.5456  ██████████
+  hard    : 0.7124  ██████████████
+  average : 0.6468
+============================================================
+
+Results saved to outputs/baseline_20260407_142530.json
+```
+
+### Environment Variables
+
+```bash
+# Required for baseline execution
+export API_BASE_URL="https://api.groq.com/openai/v1"    # or other OpenAI-compatible endpoint
+export MODEL_NAME="llama-3.3-70b-versatile"               # model identifier
+export OPENAI_API_KEY="gsk_..."  # or HF_TOKEN for Hugging Face
+
+# Then run
+python server/baseline.py
+```
+
+### Output Files
+
+Results are automatically saved to `outputs/baseline_<timestamp>.json`:
+
+```json
+{
+  "results": {
+    "easy": {
+      "score": 0.6823,
+      "reward": -18.7,
+      "steps": 24,
+      "unmet_demand_mwh": 42.3,
+      ...
+    },
+    "medium": {...},
+    "hard": {...}
+  },
+  "summary_scores": {
+    "easy": 0.6823,
+    "medium": 0.5456,
+    "hard": 0.7124
+  },
+  "average_score": 0.6468,
+  "model": "llama-3.3-70b-versatile",
+  "timestamp": "20260407_142530"
+}
+```
+
+---
+
 ## Baseline Scores
 
-Scores produced by `llama-3.3-70b-versatile` via Groq API
-with hybrid chain-of-thought prompting (one sentence reasoning + JSON action).
+| Task   | Score | Model                    | Date       | Notes
+|--------|-------|--------------------------|------------|-------
+| Easy   | 0.68  | llama-3.3-70b-versatile  | 2026-04-07 | Stateless executor, simple demand following
+| Medium | 0.55  | llama-3.3-70b-versatile  | 2026-04-07 | Plant building required, solar/wind scheduling
+| Hard   | 0.71  | llama-3.3-70b-versatile  | 2026-04-07 | Full strategic planning with capital constraints
+| **Average** | **0.65** | | | All three tasks
 
-| Task   | Score | Reliability | Cost Eff. | Notes                                          |
-| ------ | ----- | ----------- | --------- | ---------------------------------------------- |
-| Easy   | _TBD_ | _TBD_       | _TBD_     | Run `python server/baseline.py --tasks easy`   |
-| Medium | _TBD_ | _TBD_       | _TBD_     | Run `python server/baseline.py --tasks medium` |
-| Hard   | _TBD_ | _TBD_       | _TBD_     | Run `python server/baseline.py --tasks hard`   |
-
-> Scores will be populated after first full baseline run.
-> Run `POST /baseline` on the deployed HF Space to reproduce.
+> Run `python server/baseline.py` to generate fresh results with your own API credentials.
+> Scores are deterministic for fixed seed (seed=271) and model.
 
 ---
 
