@@ -523,11 +523,13 @@ python server/baseline.py --output results.json
 ### Architecture
 
 **Easy / Medium tasks:**
+
 - Stateless executor: each step prompt contains current observation + user-provided budget (hard only)
 - Single-turn LLM calls (no conversation history)
 - Action parsed from JSON block in response
 
 **Hard task:**
+
 - One-shot strategic planner at episode start (computes full build schedule + dispatch strategy)
 - Plan (budget, events, plants) injected into every executor system prompt
 - Executor follows plan with real-time adjustments
@@ -535,59 +537,55 @@ python server/baseline.py --output results.json
 
 ### Sample Baseline Output
 
+**Real run on April 2, 2026** with `llama-3.3-70b-versatile` via Groq API:
+
 ```
 ============================================================
-  ENERGY GRID OPENENV — BASELINE AGENT
-============================================================
-  Model: llama-3.3-70b-versatile
-  Tasks: ['easy', 'medium', 'hard']
-
-[START] task=easy env=energy-grid-openenv model=llama-3.3-70b-versatile
-
-[STEP] step=1 action=coal_delta=+50 battery_mode=idle plant_action=none reward=-2.5 done=false error=null
-[STEP] step=2 action=coal_delta=+0 battery_mode=discharge plant_action=none reward=-1.2 done=false error=null
-[STEP] step=3 action=coal_delta=-30 battery_mode=charge plant_action=none reward=-0.8 done=false error=null
-...
-[STEP] step=24 action=coal_delta=+20 battery_mode=idle plant_action=none reward=+0.5 done=true error=null
-[END] task=easy episode_length=24 total_reward=-18.7 final_score=0.6823
-
-[START] task=medium env=energy-grid-openenv
-
-[STEP] step=1 action=coal_delta=+0 battery_mode=idle plant_action=build_wind reward=-1.8 done=false error=null
-[STEP] step=2 action=coal_delta=-20 battery_mode=discharge plant_action=none reward=-2.1 done=false error=null
-...
-[STEP] step=48 action=coal_delta=+50 battery_mode=idle plant_action=close_coal reward=+1.2 done=true error=null
-[END] task=medium episode_length=48 total_reward=-42.3 final_score=0.5456
-
-[START] task=hard env=energy-grid-openenv
-
-PLANNING PHASE:
-  Capital budget: 2000 units
-  Goal: Build nuclear (1000) + hydro (600) + nuclear (500) = complete
-  Coal outage: steps 23-25 (hard constraint)
-  Events: [coal_outage, price_spike, drought, ...]
-
-[STEP] step=1 action=coal_delta=+0 battery_mode=idle plant_action=build_nuclear reward=-0.5 done=false error=null
-[STEP] step=2 action=coal_delta=+10 battery_mode=idle plant_action=build_hydro reward=-1.2 done=false error=null
-...
-[STEP] step=23 action=coal_delta=+50 battery_mode=discharge plant_action=none reward=-8.5 done=false error=null
-[STEP] step=24 action=coal_delta=+30 battery_mode=discharge plant_action=none reward=-7.2 done=false error=null
-[STEP] step=25 action=coal_delta=+40 battery_mode=idle plant_action=none reward=-6.8 done=false error=null
-...
-[STEP] step=72 action=coal_delta=+0 battery_mode=idle plant_action=none reward=+2.5 done=true error=null
-[END] task=hard episode_length=72 total_reward=-185.4 final_score=0.7124
-
-============================================================
-  BASELINE SUMMARY
-============================================================
-  easy    : 0.6823  ████████████
-  medium  : 0.5456  ██████████
-  hard    : 0.7124  ██████████████
-  average : 0.6468
+BASELINE RESULTS (April 2, 2026 22:14:15)
 ============================================================
 
-Results saved to outputs/baseline_20260407_142530.json
+Task: EASY
+  Score: 0.1806
+  Steps: 24/24
+  Total Reward: -607.91
+  Blackout: False
+  Cost: 12.91
+  Emissions: 11623.5 tons
+  Plants Built: []
+
+Task: MEDIUM
+  Score: 0.3935
+  Steps: 7/48
+  Total Reward: -526.25
+  Blackout: True  (blackout at step 7)
+  Cost: 2.89
+  Emissions: 2604.6 tons
+  Plants Built: ['solar', 'wind']
+
+Task: HARD
+  Score: 0.3695
+  Steps: 26/72
+  Total Reward: -1117.80
+  Blackout: True  (blackout at step 26)
+  Cost: 18.70
+  Emissions: 11554.2 tons
+  Plants Built: ['solar', 'wind', 'hydro']
+
+============================================================
+SUMMARY
+============================================================
+  easy    : 0.1806
+  medium  : 0.3935
+  hard    : 0.3695
+  average : 0.3145
 ```
+
+**Key Observations:**
+- **Easy task**: Completed all 24 steps without blackout, but low score (0.18) due to high emissions and cost inefficiency
+- **Medium task**: Failed early with blackout at step 7 — insufficient renewable capacity despite building solar + wind
+- **Hard task**: Failed at step 26, likely during coal outage period (steps 23–25) when battery depleted
+- The agent built plants but too slowly — needs earlier construction decisions
+- Multi-hour planning horizon insufficient for this 24/48/72-step horizon
 
 ### Environment Variables
 
@@ -633,15 +631,23 @@ Results are automatically saved to `outputs/baseline_<timestamp>.json`:
 
 ## Baseline Scores
 
-| Task   | Score | Model                    | Date       | Notes
-|--------|-------|--------------------------|------------|-------
-| Easy   | 0.68  | llama-3.3-70b-versatile  | 2026-04-07 | Stateless executor, simple demand following
-| Medium | 0.55  | llama-3.3-70b-versatile  | 2026-04-07 | Plant building required, solar/wind scheduling
-| Hard   | 0.71  | llama-3.3-70b-versatile  | 2026-04-07 | Full strategic planning with capital constraints
-| **Average** | **0.65** | | | All three tasks
+| Task        | Score    | Steps    | Blackout | Model                   | Date       | Notes                             |
+| ----------- | -------- | -------- | -------- | ----------------------- | ---------- | --------------------------------- |
+| Easy        | **0.18** | 24/24    | No       | llama-3.3-70b-versatile | 2026-04-02 | Completed but high emissions      |
+| Medium      | **0.39** | 7/48     | **Yes**  | llama-3.3-70b-versatile | 2026-04-02 | Early failure, insufficient cap   |
+| Hard        | **0.37** | 26/72    | **Yes**  | llama-3.3-70b-versatile | 2026-04-02 | Fails during coal outage          |
+| **Average** | **0.31** | —        | —        |                         | 2026-04-02 | All three tasks                   |
 
-> Run `python server/baseline.py` to generate fresh results with your own API credentials.
-> Scores are deterministic for fixed seed (seed=271) and model.
+**Results file:** `outputs/baseline_20260402_221415.json`
+
+**Analysis:**
+- Average score of 0.31 is representative of frontier LLM performance on this task
+- Easy task passable without blackout but inefficient (high emissions)
+- Medium/hard tasks fail due to insufficient multi-step planning
+- Agent builds plants but timing is suboptimal
+- Stateless agent struggles with 48/72-step horizons
+
+Run `python server/baseline.py` to reproduce or benchmark your improvements.
 
 ---
 
