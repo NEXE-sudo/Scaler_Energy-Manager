@@ -415,13 +415,6 @@ class EnergyGridObservation(Observation):
             "'nuclear_trip', 'price_spike', 'grid_fault'."
         ),
     )
-    solar_weather: Literal["clear", "partial", "cloudy", "storm"] = Field(
-        default="clear",
-        description=(
-            "Current solar irradiance condition. "
-            "'clear' = full output, 'partial' = 60%, 'cloudy' = 30%, 'storm' = 0%."
-        ),
-    )
 
     # ------------------------------------------------------------------
     # Plant construction queue (Hard task)

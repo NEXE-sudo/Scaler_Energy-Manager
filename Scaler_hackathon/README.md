@@ -288,11 +288,11 @@ for 57 steps. Building it at step 40 means only 17 steps of benefit.
 ```python
 reward = (
     # Reliability (primary objective)
-    - 0.10 * unmet_demand_mw          # heavy penalty per MW unserved
+    - 0.25 * unmet_demand_mw          # heavy penalty per MW unserved
     - 0.002 * overproduction_mw       # small waste penalty
 
     # Grid stability
-    - 0.5 * abs(frequency - 50.0)     # frequency deviation penalty
+    - 0.2 * freq_error                # frequency deviation penalty
     + 0.2 if abs(frequency - 50.0) < 0.1  # bonus for very stable grid
 
     # Generation costs

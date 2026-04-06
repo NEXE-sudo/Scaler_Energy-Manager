@@ -179,8 +179,8 @@ INITIAL STATE:
 - Capital available: {obs.capital_budget:.0f} units
 
 IMPORTANT:
-- Solar and wind are NOT installed initially — they must be built.
-- Build decisions are irreversible and delayed — timing matters.
+- Solar and wind ARE available from the start at no cost.
+- Hydro and nuclear must be built. Build decisions are irreversible and delayed.
 
 TIMING CONSTRAINTS:
 - You MUST commit key build actions within the first 3 steps.
@@ -190,9 +190,9 @@ TIMING CONSTRAINTS:
 - Wind started at step 0 → online at step 6 (provides early buffer before peak/outage).
 
 RECOMMENDED STRATEGY (strong baseline, may deviate with justification):
-- Step 0: build_wind (250 MW online at step 6 — stabilises early demand)
-- Step 1: build_nuclear (500 MW online at step 16 — critical for outage)
-- Step 2+: optional hydro or solar depending on remaining budget
+- Step 0: build_nuclear (500 MW online at step 15 — critical baseload, online before outage)
+- Step 1: build_hydro (200 MW online at step 11 — dispatchable, helps offset coal outage)
+- Step 2+: preserve remaining 400 units as reserve capital or invest in wind if needed
 
 GUIDELINES:
 - Ensure sufficient capacity BEFORE the coal outage — do not rely only on battery.
@@ -493,8 +493,8 @@ def run_task(
             f"battery_mode={action.battery_mode} "
             f"plant_action={action.plant_action}"
         )
-        print(f"[STEP] step={step_count} action={action_str} reward={reward:.2f}", flush=True)
-        time.sleep(5)
+        done_str = str(obs.done).lower()
+        print(f"[STEP] step={step_count} action={action_str} reward={reward:.2f} done={done_str} error=null", flush=True)
 
         last_action_summary = (
             f"LastAction: coal_delta={action.coal_delta:+.0f} "

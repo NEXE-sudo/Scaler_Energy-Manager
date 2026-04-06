@@ -14,10 +14,9 @@ Grader components per task:
         cost_efficiency  (0.40) — normalised operational cost
 
     Medium:
-        reliability      (0.50) — % steps with demand fully met
-        cost_efficiency  (0.25) — normalised operational cost
-        battery_health   (0.15) — final battery level / capacity
-        frequency_score  (0.10) — % steps within ±0.2 Hz of 50.0
+        reliability      (0.60) — % steps with demand fully met
+        cost_efficiency  (0.30) — normalised operational cost
+        battery_health   (0.10) — final battery level / capacity
 
     Hard:
         reliability      (0.40) — % steps with demand fully met
