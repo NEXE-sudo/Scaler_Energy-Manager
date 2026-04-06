@@ -408,15 +408,17 @@ def step_hydro(
     requested_output_mw: float,
     active_events: List[str],
     rng: random.Random,
-) -> float:
+) -> Tuple[float, bool]:
     """
     Update hydro reservoir and compute actual output.
 
     Depletes reservoir when generating. Receives natural inflow each step.
     Spillage occurs if reservoir is near-full (waste + penalty signal).
+    
+    Returns: (output_mw, spillage_occurred)
     """
     if not hydro_state.available:
-        return 0.0
+        return 0.0, False
 
     # Natural inflow (reduced by drought)
     if "drought" in active_events:
@@ -446,12 +448,13 @@ def step_hydro(
     hydro_state.reservoir_mwh = max(0.0, hydro_state.reservoir_mwh - (actual_output / 0.87))
 
     # Automatic spillage if near capacity
+    spillage_occurred = False
     if hydro_state.reservoir_mwh > HYDRO_SPILLAGE_THRESHOLD:
         spilled = hydro_state.reservoir_mwh - HYDRO_SPILLAGE_THRESHOLD
         hydro_state.reservoir_mwh = HYDRO_SPILLAGE_THRESHOLD
-        # spilled is tracked externally via reward penalty
+        spillage_occurred = True
 
-    return actual_output
+    return actual_output, spillage_occurred
 
 
 # ---------------------------------------------------------------------------
@@ -541,7 +544,7 @@ def step_nuclear(
     if scram_triggered and nuclear_state.online:
         nuclear_state.online = False
         nuclear_state.output_mw = 0.0
-        nuclear_state.trip_steps_remaining = NUCLEAR_STARTUP_STEPS
+        nuclear_state.trip_steps_remaining = NUCLEAR_STARTUP_STEPS + 1
         return 0.0
 
     if not nuclear_state.online:
@@ -771,12 +774,8 @@ def schedule_events(
             step = rng.randint(0, total_steps - 8)
             add_event(step, rng.choice(["heatwave", "cold_snap"]))
 
-        # Wind calm period
-        for _ in range(rng.randint(1, 3)):
-            step = rng.randint(0, total_steps - 4)
-            add_event(step, "calm")
-
-        # Rainfall (positive event — refills reservoir)
+    if task_id == "hard":
+        # Rainfall (positive event — refills reservoir) — only in hard task where hydro is available
         if rng.random() < 0.5:
             add_event(rng.randint(0, total_steps - 1), "rainfall")
 
@@ -833,7 +832,7 @@ def apply_event_start(event: str, state: GridSimState) -> None:
         if state.nuclear.available and state.nuclear.online:
             state.nuclear.online = False
             state.nuclear.output_mw = 0.0
-            state.nuclear.trip_steps_remaining = NUCLEAR_STARTUP_STEPS
+            state.nuclear.trip_steps_remaining = NUCLEAR_STARTUP_STEPS + 1
 
     elif event == "price_spike":
         state.coal_price = min(2.5, state.coal_price * 2.0)
@@ -1229,19 +1228,19 @@ def simulator_step(
         ),
     )
     prev_reservoir = state.hydro.reservoir_mwh
-    hydro_out = step_hydro(state.hydro, target_hydro, state.active_events, state.rng)
+    hydro_out, spillage_occurred = step_hydro(state.hydro, target_hydro, state.active_events, state.rng)
     state.hydro.output_mw = hydro_out
-    spillage_occurred = prev_reservoir > HYDRO_SPILLAGE_THRESHOLD
 
     # 11. Demand response (reduces effective demand)
     dr_mw = min(demand_response_mw, 150.0, state.demand_mw * 0.30)
 
-    # Apply reduction
-    effective_demand = state.demand_mw - dr_mw
-
+    # Clamp DR to affordability first, before applying reduction
     if task_id == "hard":
         max_affordable_dr = state.capital_budget / DR_COST_PER_MW
         dr_mw = min(dr_mw, max_affordable_dr)
+
+    # Apply reduction
+    effective_demand = state.demand_mw - dr_mw
 
     # Track cumulative usage (only once, after capital affordability check)
     state.total_demand_response += dr_mw
