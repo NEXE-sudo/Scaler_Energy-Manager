@@ -11,6 +11,10 @@ dependencies = [
     # Core OpenEnv runtime
     "openenv-core[core]>=0.2.1",
 
+    # FastAPI server & ASGI runtime
+    "fastapi>=0.115.0",
+    "uvicorn>=0.24.0",
+
     # Simulation & numerics
     "numpy>=1.26.0",
 

@@ -194,6 +194,7 @@ class EnergyGridEnv(
             cumulative_emissions_tons=obs_data.get(
                 "cumulative_emissions_tons", 0.0
             ),
+            feedin_credits_mwh=obs_data.get("feedin_credits_mwh", 0.0),
 
             # Episode metadata
             step_reward=obs_data.get("step_reward", 0.0),

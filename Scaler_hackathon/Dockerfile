@@ -77,7 +77,7 @@ ENV PYTHONPATH="/app/env:$PYTHONPATH"
 
 # Health check — uses PORT env var (HF Spaces sets PORT=7860, local default 8000)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=5 \
-    CMD curl -f http://localhost:${PORT:-7860}/health || exit 1
+    CMD ["sh", "-c", "curl -f http://localhost:${PORT:-7860}/health || exit 1"]
 
 # Run the FastAPI server
 # HF Spaces injects PORT=7860; fall back to 8000 for local Docker runs
