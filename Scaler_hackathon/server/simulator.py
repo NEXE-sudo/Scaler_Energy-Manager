@@ -852,11 +852,10 @@ def apply_event_start(event: str, state: GridSimState) -> None:
 def apply_event_end(event: str, state: GridSimState) -> None:
     """Restore state when an event expires."""
     if event == "coal_outage":
+        # Restore coal max, but preserve any boost damage that was applied independently
         state.coal.max_mw = COAL_MAX_MW
-
     elif event == "price_spike":
         state.coal_price = 1.0
-
     elif event == "grid_fault":
         state.transmission_capacity_mw = TRANSMISSION_NOMINAL_MW
 

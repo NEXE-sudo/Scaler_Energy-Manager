@@ -166,7 +166,7 @@ def _build_planner_prompt(obs: "EnergyGridObservation") -> str:
 
 KNOWN CONSTANTS (these are guaranteed facts, not estimates):
 - Winter peak demand ~1100 MW. Coal max = 600 MW → structural deficit ~500 MW → new capacity is REQUIRED.
-- Coal outage GUARANTEED at steps 24–27 (day 2). Coal max drops to 300 MW for 3 steps.
+- Coal outage GUARANTEED at steps 23–25 (day 2). Coal max drops to 300 MW for 3 steps.
 - Nuclear: costs 1000, build time 15 steps, output 500 MW baseload (min 300 MW once online).
 - Wind:    costs 400, build time 6 steps, output 250 MW (available day & night).
 - Solar:   costs 500, build time 8 steps, output 300 MW (zero at night).
@@ -207,7 +207,7 @@ PLAN:
 - Build Order: <what to build and at which steps>
 - Coal Strategy: <how coal is ramped and used over time>
 - Battery Strategy: <when to conserve vs discharge>
-- Outage Plan: <how to survive steps 24–27>
+- Outage Plan: <how to survive steps 23–25>
 - Emissions Strategy: <how and when to reduce coal dependency>
 
 Be concise, decisive, and forward‑looking.
@@ -225,7 +225,7 @@ def _build_user_prompt(obs: EnergyGridObservation, task_id: str) -> str:
     gap = obs.demand_mw - total
     battery_pct = int(100*obs.battery_level_mwh/max(1,obs.battery_capacity_mwh))
     
-    return (
+    prompt = (
         f"Step {obs.step}/{task['total_steps']} | "
         f"Demand: {obs.demand_mw:.0f} MW | "
         f"Generation: {total:.0f} MW | "
@@ -240,6 +240,20 @@ def _build_user_prompt(obs: EnergyGridObservation, task_id: str) -> str:
         f"Frequency: {obs.grid_frequency:.2f} Hz | "
         f"Risk: {obs.blackout_risk}"
     )
+    
+    # Hard task: include budget, events, and construction status
+    if task_id == "hard":
+        construction_str = ", ".join(
+            f"{p['type']} ({p['steps_remaining']} steps left)"
+            for p in obs.plants_under_construction
+        ) or "none"
+        prompt += (
+            f" | Budget: {obs.capital_budget:.0f} | "
+            f"Events: {', '.join(obs.active_events) if obs.active_events else 'none'} | "
+            f"Building: {construction_str}"
+        )
+    
+    return prompt
 
 
 def _parse_action(response_text: str) -> EnergyGridAction:
@@ -684,21 +698,26 @@ def run_baseline_agent(
         print(f"  {'average':8s}: {avg:.4f}")
         print("=" * 60)
 
-    # Save results to outputs/
+    # Save results to outputs/ (wrap in try/except for HF Spaces read-only filesystem)
     import datetime
-    outputs_dir = Path(__file__).parent.parent / "outputs"
-    outputs_dir.mkdir(exist_ok=True)
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_file = outputs_dir / f"baseline_{timestamp}.json"
-    output_file.write_text(json.dumps({
-        "results": results,
-        "summary_scores": summary_scores,
-        "average_score": round(sum(summary_scores.values()) / max(1, len(summary_scores)), 4),
-        "model": model,
-        "timestamp": timestamp,
-    }, indent=2))
-    if verbose:
-        print(f"\n  Results saved to {output_file}")
+    try:
+        outputs_dir = Path(__file__).parent.parent / "outputs"
+        outputs_dir.mkdir(exist_ok=True)
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = outputs_dir / f"baseline_{timestamp}.json"
+        output_file.write_text(json.dumps({
+            "results": results,
+            "summary_scores": summary_scores,
+            "average_score": round(sum(summary_scores.values()) / max(1, len(summary_scores)), 4),
+            "model": model,
+            "timestamp": timestamp,
+        }, indent=2))
+        if verbose:
+            print(f"\n  Results saved to {output_file}")
+    except (OSError, PermissionError) as e:
+        # HF Spaces or other read-only filesystems — silently skip file write
+        if verbose:
+            print(f"  (Could not write results file: {e})")
 
     return {
         "results": results,

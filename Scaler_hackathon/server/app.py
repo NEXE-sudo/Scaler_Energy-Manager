@@ -190,11 +190,6 @@ async def grade_episode(request: GraderRequest = GraderRequest()) -> JSONRespons
 
     # Validate task_id if provided
     if request.task_id is not None:
-        if env.current_task_id is None:
-            raise HTTPException(
-                status_code=404,
-                detail="No episode data available. Call POST /reset to start an episode first.",
-            )
         if request.task_id != env.current_task_id:
             raise HTTPException(
                 status_code=400,
