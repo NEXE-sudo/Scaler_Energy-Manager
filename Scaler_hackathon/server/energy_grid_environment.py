@@ -184,6 +184,10 @@ class EnergyGridEnvironment(Environment):
             # Auto-reset if step called before reset
             return self.reset(self._task_id)
 
+        # Guard: prevent stepping after episode has ended
+        if self._sim.episode_ended:
+            return self._build_observation(reward=0.0, done=True)
+
         # Run physics
         result = simulator_step(
             state=self._sim,
@@ -313,7 +317,9 @@ class EnergyGridEnvironment(Environment):
         if sim is None:
             return EnergyGridObservation(done=done, reward=reward)
 
-        hour = sim.step % 24
+        # Use (step - 1) because step was already incremented in simulator_step
+        # This ensures time_of_day matches demand/solar computed at that hour
+        hour = (sim.step - 1) % 24
         result = self._last_step_result
 
         # Spinning reserve

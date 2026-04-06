@@ -381,8 +381,9 @@ def _apply_control_layer(
     if action.plant_action == "close_coal":
         action.plant_action = "none"
 
-    # Block emergency boost spam — if coal is already damaged, don't boost again
-    if action.emergency_coal_boost and obs.coal_max_mw < 580.0:
+    # Block emergency boost spam — only if coal is damaged (not during outage)
+    # Check: coal is not starting up AND max_mw is below recovery threshold (550 = 600 - boost_damage)
+    if action.emergency_coal_boost and obs.coal_startup_steps_remaining == 0 and obs.coal_max_mw < 550.0:
         action.emergency_coal_boost = False
 
     return action
