@@ -217,7 +217,19 @@ class EnergyGridObservation(Observation):
 
 ---
 
-## Tasks
+## Task Definitions & Real-World Grounding
+
+### Real-World Problem Mapping
+
+Each task models genuine grid challenges from real-world operations:
+
+| Task | Real Scenario | Grid Operator Challenge | Domain Difficulty |
+|------|---------------|------------------------|-------------------|
+| **Easy** | Single coal plant (rural grid, 1–2 plants) | Learn daily demand curve, manage ramp constraints | Coal physics |
+| **Medium** | High renewable grid (Germany/Denmark, 40–60% wind+solar) | Forecast variability, manage sudden losses, balance rapidly | Weather foresight |
+| **Hard** | Multi-source strategic planning (ERCOT, UK winter, Australia drought) | Capital decisions, cascading failures, multi-objective trade-offs | Long-horizon reasoning |
+
+---
 
 ### Task 1 — Easy: Baseline Dispatch
 
@@ -318,6 +330,59 @@ reward = (
 ```
 
 Rewards are **dense** — every step provides a meaningful signal.
+
+---
+
+## Observation Space Reference
+
+Full state returned by environment per step (50+ features):
+
+| Category | Feature | Type | Range | Unit | Description |
+|----------|---------|------|-------|------|-------------|
+| **Time** | demand_mw | float | 200–1100 | MW | Current demand |
+| | time_of_day | int | 0–23 | h | Hour of day |
+| | season | str | {spring, summer, autumn, winter} | — | Affects base demand |
+| **Coal** | coal_output_mw | float | 0–600 | MW | Current output |
+| | coal_price | float | 20–200 | $/MWh | Fuel price (varies) |
+| **Renewables** | solar_output_mw | float | 0–300 | MW | Weather-driven |
+| | wind_output_mw | float | 0–250 | MW | Stochastic |
+| **Hydro** | hydro_output_mw | float | 0–200 | MW | Dispatched output |
+| | reservoir_level_mwh | float | 0–1000 | MWh | Stored water |
+| **Nuclear** | nuclear_output_mw | float | 0–500 | MW | Baseload (slow ramp) |
+| **Battery** | battery_level_mwh | float | 0–200 | MWh | Stored energy |
+| **Grid** | grid_frequency | float | 47.5–51.5 | Hz | System frequency |
+| | unmet_demand_mw | float | 0–300 | MW | Load shedding |
+| | blackout_risk | str | {none, low, med, high, critical} | — | Risk level |
+| **Investment** | capital_budget | float | 0–2000 | units | Budget (hard only) |
+| | plants_under_construction | list | — | — | Build queue |
+| **Economics** | cumulative_cost | float | 0–500 | units | Total cost |
+| | cumulative_emissions_tons | float | 0–5000 | tons | CO₂ total |
+
+**Design**: Raw physical units provided; agents can normalize using `server.normalization.normalize_observation()` for improved generalization.
+
+---
+
+## What Makes This Environment Novel
+
+**vs. Classical RL (MuJoCo, Atari, DMC):**
+- Real economic/physical constraints (ramp-rate limits, plant build times, transmission capacity)
+- Long-horizon multi-objective reward (not single scalar)
+- Natural state: grid operators think in MW, not abstract vectors
+
+**vs. Grid Simulators (MATPOWER, GRAPE, SimPy):**
+- First OpenEnv-compliant grid benchmark for diverse agent types
+- LLM-friendly action space (natural language reasoning before computation)
+- Stateless baseline weak (0.25 score) → genuine challenge, room for improvement
+- Three difficulty tasks validate learning progression
+
+**vs. RL Research on Power Systems:**
+- Hybrid action space (continuous dispatch + discrete investment)
+- Physics-based constraints prevent trivial solutions
+- Fair grader across RL/LLM/hybrid architectures
+- Reproducible episodes with optional seed override for robustness testing
+
+**Why it matters**: Real grid companies (Tesla, NextEra, Shell, governments) simulate to train operators. LLM agents could augment traditional control if proven real-world-competitive. This fills that gap.
+
 The agent is never in a sparse reward situation where it must guess
 whether its actions are helping.
 
@@ -632,12 +697,12 @@ Results are automatically saved to `outputs/baseline_<timestamp>.json`:
 
 ## Baseline Scores
 
-| Task        | Score    | Steps | Blackout | Model                   | Date       | Notes                           |
-| ----------- | -------- | ----- | -------- | ----------------------- | ---------- | ------------------------------- |
-| Easy        | **0.18** | 19/24 | **Yes**  | llama-3.3-70b-versatile | 2026-04-07 | Blackout at step 18             |
-| Medium      | **0.23** | 21/48 | **Yes**  | llama-3.3-70b-versatile | 2026-04-07 | Blackout at step 20             |
-| Hard        | **0.33** | 2/72  | **Yes**  | llama-3.3-70b-versatile | 2026-04-07 | Blackout at step 1              |
-| **Average** | **0.25** | —     | —        |                         | 2026-04-07 | All three tasks                 |
+| Task        | Score    | Steps | Blackout | Model                   | Date       | Notes               |
+| ----------- | -------- | ----- | -------- | ----------------------- | ---------- | ------------------- |
+| Easy        | **0.18** | 19/24 | **Yes**  | llama-3.3-70b-versatile | 2026-04-07 | Blackout at step 18 |
+| Medium      | **0.23** | 21/48 | **Yes**  | llama-3.3-70b-versatile | 2026-04-07 | Blackout at step 20 |
+| Hard        | **0.33** | 2/72  | **Yes**  | llama-3.3-70b-versatile | 2026-04-07 | Blackout at step 1  |
+| **Average** | **0.25** | —     | —        |                         | 2026-04-07 | All three tasks     |
 
 **Results file:** `outputs/baseline_20260407_031508.json`
 
