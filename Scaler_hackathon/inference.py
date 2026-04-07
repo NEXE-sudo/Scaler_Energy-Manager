@@ -30,6 +30,13 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
+# Load .env file if it exists (optional but recommended)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env")
+except ImportError:
+    pass  # dotenv optional; env vars can be set directly
+
 from server.baseline import run_baseline_agent
 
 
