@@ -1,12 +1,9 @@
-Client.py
 README.md
 __init__.py
+client.py
+inference.py
 models.py
 pyproject.toml
-./Client.py
-./__init__.py
-./inference.py
-./models.py
 energy_grid_openenv.egg-info/PKG-INFO
 energy_grid_openenv.egg-info/SOURCES.txt
 energy_grid_openenv.egg-info/dependency_links.txt
@@ -20,3 +17,4 @@ server/energy_grid_environment.py
 server/grader.py
 server/simulator.py
 server/tasks.py
+tests/test_env.py

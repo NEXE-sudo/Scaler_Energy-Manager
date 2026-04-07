@@ -159,6 +159,7 @@ This checks:
 **Expected score: 19–20 / 20** (up from 18–20)
 
 **Key improvements**:
+
 - Normalization module enables agents to generalize across feature scales
 - Seed override allows robustness evaluation without changing task code
 - Action scaling rationales explain physical basis (coal ±100 MW per steam physics, nuclear ±10 MW to teach long-horizon planning)

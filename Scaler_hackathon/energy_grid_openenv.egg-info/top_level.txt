@@ -1,1 +1,4 @@
-energy_grid_openenv
+client
+inference
+models
+server

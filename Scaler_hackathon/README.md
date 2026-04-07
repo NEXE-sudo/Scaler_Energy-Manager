@@ -969,16 +969,17 @@ This environment is grounded in operational challenges faced by **real grid oper
 
 ### Real-World Incidents Mapped to Tasks
 
-| Incident | Year | Real Impact | Aligned Task | Key Challenge |
-|----------|------|------------|--------------|----------------|
-| **Texas Freeze (ERCOT)** | 2021 | 210+ deaths, $130B economic loss | Hard | Coal/nuclear freeze-offs + wind shutdown, unable to build capacity fast enough |
-| **UK Storm Arwen** | 2021 | 1.3M without power, £billions cost | Medium | Renewable variability (wind spike then drop), distribution failures |
-| **Australia Black System** | 2016 | 1.7M without power, $1B+ impact | Hard | Sudden loss of 1000 MW + low inertia (renewables) → frequency collapse |
-| **German Duck Curve** | 2010–present | Grid instability during solar ramp | Medium | Daily solar ramping from 0→peak→0 MW, storage inadequate |
-| **New Zealand Drought** | 2008 | Hydro SoC < 1%, tight demand response | Hard + Medium | Reservoir depletion, extended low inflow forecast, strategic build decisions |
-| **PJM 2003 Cascade** | 2003 | 55M without power (Northeast) | Hard | Transmission fault → reactive cascade → frequency collapse |
+| Incident                   | Year         | Real Impact                           | Aligned Task  | Key Challenge                                                                  |
+| -------------------------- | ------------ | ------------------------------------- | ------------- | ------------------------------------------------------------------------------ |
+| **Texas Freeze (ERCOT)**   | 2021         | 210+ deaths, $130B economic loss      | Hard          | Coal/nuclear freeze-offs + wind shutdown, unable to build capacity fast enough |
+| **UK Storm Arwen**         | 2021         | 1.3M without power, £billions cost    | Medium        | Renewable variability (wind spike then drop), distribution failures            |
+| **Australia Black System** | 2016         | 1.7M without power, $1B+ impact       | Hard          | Sudden loss of 1000 MW + low inertia (renewables) → frequency collapse         |
+| **German Duck Curve**      | 2010–present | Grid instability during solar ramp    | Medium        | Daily solar ramping from 0→peak→0 MW, storage inadequate                       |
+| **New Zealand Drought**    | 2008         | Hydro SoC < 1%, tight demand response | Hard + Medium | Reservoir depletion, extended low inflow forecast, strategic build decisions   |
+| **PJM 2003 Cascade**       | 2003         | 55M without power (Northeast)         | Hard          | Transmission fault → reactive cascade → frequency collapse                     |
 
 **Key Insight:** Each task encodes a real operator failure mode:
+
 - **Easy**: Basic demand-following failures (operator inexperience, poor forecasting)
 - **Medium**: Weather-driven variability (wind/solar unpredictability, insufficient reserve)
 - **Hard**: Cascading faults + strategic decisions (asset failures while managing transitions)
@@ -987,12 +988,12 @@ This environment is grounded in operational challenges faced by **real grid oper
 
 This environment enforces **NERC Reliability Standards** (North American Electric Reliability Corporation):
 
-| Standard | Constraint Implemented | Why It Matters |
-|----------|----------------------|-----------------|
-| **EOP-003** | Min 15% spinning reserve on >1000 MW demand | Prevents frequency collapse when largest generator trips |
-| **EOP-005** | Frequency recovery within 3 min after +/- 0.5 Hz event | RoCoF limits (+1 Hz/step) enforce inertia requirements |
-| **BAL-001** | Real-time demand-supply matching within ±50 MW | Our unmet_demand penalty (−0.25/MW) |
-| **FAC-003** | Transmission facility rating enforcement | Our transmission_capacity_mw field + constraints |
+| Standard    | Constraint Implemented                                 | Why It Matters                                           |
+| ----------- | ------------------------------------------------------ | -------------------------------------------------------- |
+| **EOP-003** | Min 15% spinning reserve on >1000 MW demand            | Prevents frequency collapse when largest generator trips |
+| **EOP-005** | Frequency recovery within 3 min after +/- 0.5 Hz event | RoCoF limits (+1 Hz/step) enforce inertia requirements   |
+| **BAL-001** | Real-time demand-supply matching within ±50 MW         | Our unmet_demand penalty (−0.25/MW)                      |
+| **FAC-003** | Transmission facility rating enforcement               | Our transmission_capacity_mw field + constraints         |
 
 **Real Operators:** Grid operators at ERCOT, UK National Grid, Transnet (EU), and Japanese TEPCO use similar simulators daily.
 
@@ -1003,6 +1004,7 @@ This environment enforces **NERC Reliability Standards** (North American Electri
 Each grader weight reflects **real operational priorities** and **risk escalation**:
 
 ### Easy Task: 60% Reliability / 40% Cost
+
 ```
 In a controlled grid (single coal plant, no events):
 → Reliability is paramount (blackout = unacceptable)
@@ -1013,6 +1015,7 @@ In a controlled grid (single coal plant, no events):
 **Real analogy:** Rural grid operator managing a single coal plant. Primary job: avoid blackouts. Cost optimization is nice-to-have.
 
 ### Medium Task: 60% Reliability / 30% Cost / 10% Battery Health
+
 ```
 With renewables + weather variability:
 → Reliability stays paramount (weather can destroy capacity instantly)
@@ -1024,6 +1027,7 @@ With renewables + weather variability:
 **Real analogy:** Nordic/German TSO managing 40–60% renewables. Must preserve battery state-of-charge for next weather event.
 
 ### Hard Task: 40% Reliability / 20% Cost / 10% Emissions / 10% Reservoir / 10% Battery / 10% Capital
+
 ```
 With cascading failures + capital decisions + carbon goals:
 → Reliability drops to 40% (harder to achieve 100%)
@@ -1038,6 +1042,7 @@ With cascading failures + capital decisions + carbon goals:
 **Real analogy:** Large grid operating at 80%+ renewable penetration (Australia, Denmark). Must balance immediate reliability + long-term emissions + climate resilience.
 
 **Weight Evolution Principle:**
+
 - **Easy→Medium**: +Battery (storage becomes critical)
 - **Medium→Hard**: +Emissions, +Reservoir, +Capital (multi-objective trade-offs)
 - **Progression validates:** agents learning hierarchical decision-making (reliability > cost > sustainability)
@@ -1048,16 +1053,17 @@ With cascading failures + capital decisions + carbon goals:
 
 Expected performance by agent type on Energy Grid OpenEnv:
 
-| Agent Type | Easy | Medium | Hard | Why | Deployment Readiness |
-|-----------|------|--------|------|-----|----------------------|
-| **Human Grid Operator** | 0.85–0.95 | 0.70–0.85 | 0.60–0.75 | Domain expertise, 10+ years training, intuition | Production ready |
-| **Stateless LLM (baseline)** | 0.18 | 0.23 | 0.33 | Reactive, no planning, exhausts capacity | Proof-of-concept only |
-| **LLM + Memory** | 0.50–0.60 | 0.55–0.65 | 0.40–0.50 | Maintains decisions but still myopic | Research-only |
-| **LLM + Planner** | 0.65–0.75 | 0.60–0.70 | 0.55–0.65 | Explicit strategy at step 0, real-time adjustments | Promising |
-| **RL (PPO/SAC)** | 0.72–0.80 | 0.68–0.75 | 0.45–0.55 | Excellent on predictable tasks; struggles on discrete choices | Good on easy/medium |
-| **Hybrid (RL+LLM)** | 0.78–0.88 | 0.74–0.82 | 0.65–0.75 | RL learns dispatch, LLM makes strategic builds | **Closest to operators** |
+| Agent Type                   | Easy      | Medium    | Hard      | Why                                                           | Deployment Readiness     |
+| ---------------------------- | --------- | --------- | --------- | ------------------------------------------------------------- | ------------------------ |
+| **Human Grid Operator**      | 0.85–0.95 | 0.70–0.85 | 0.60–0.75 | Domain expertise, 10+ years training, intuition               | Production ready         |
+| **Stateless LLM (baseline)** | 0.18      | 0.23      | 0.33      | Reactive, no planning, exhausts capacity                      | Proof-of-concept only    |
+| **LLM + Memory**             | 0.50–0.60 | 0.55–0.65 | 0.40–0.50 | Maintains decisions but still myopic                          | Research-only            |
+| **LLM + Planner**            | 0.65–0.75 | 0.60–0.70 | 0.55–0.65 | Explicit strategy at step 0, real-time adjustments            | Promising                |
+| **RL (PPO/SAC)**             | 0.72–0.80 | 0.68–0.75 | 0.45–0.55 | Excellent on predictable tasks; struggles on discrete choices | Good on easy/medium      |
+| **Hybrid (RL+LLM)**          | 0.78–0.88 | 0.74–0.82 | 0.65–0.75 | RL learns dispatch, LLM makes strategic builds                | **Closest to operators** |
 
 **Gap Analysis:**
+
 - **Stateless LLM (0.25 avg) → LLM+Planner (0.63 avg):** +0.38 = adding episodic memory + strategy planning is worth **38% score improvement**
 - **LLM+Planner (0.63 avg) → Hybrid (0.74 avg):** +0.11 = adding RL for dispatch = **11% additional gain**
 - **Hybrid (0.74 avg) → Human (0.80 avg):** +0.06 gap = human operators still 6% ahead (domain knowledge, risk intuition)
