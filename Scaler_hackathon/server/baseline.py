@@ -106,7 +106,15 @@ def _build_client() -> tuple[OpenAI, str]:
             "Missing required API configuration. Set API_BASE_URL, MODEL_NAME, "
             "and an API key (OPENAI_API_KEY or HF_TOKEN)."
         )
-    client = OpenAI(api_key=api_key, base_url=api_base_url)
+    
+    try:
+        client = OpenAI(api_key=api_key, base_url=api_base_url)
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to initialize OpenAI client: {type(e).__name__}: {e}. "
+            f"Check your API_BASE_URL and credentials."
+        ) from e
+    
     return client, model_name
 
 # ---------------------------------------------------------------------------
@@ -648,7 +656,12 @@ def run_baseline_agent(
         print("  ENERGY GRID OPENENV — BASELINE AGENT")
         print("=" * 60)
 
-    client, model = _build_client()
+    try:
+        client, model = _build_client()
+    except (EnvironmentError, RuntimeError) as e:
+        print(f"  [ERROR] Client initialization failed: {e}")
+        raise  # Re-raise for caller to handle
+    
     if verbose:
         print(f"  Model: {model}")
         print(f"  Tasks: {task_ids}")
