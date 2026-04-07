@@ -36,17 +36,19 @@ from server.baseline import run_baseline_agent
 def main() -> int:
     """Run baseline agent on all tasks with structured logging."""
     
-    # Validate required environment variables
-    api_base_url = os.getenv("API_BASE_URL")
-    model_name = os.getenv("MODEL_NAME")
-    hf_token = os.getenv("API_KEY") or os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY")
+    # Load environment variables with defaults for API_BASE_URL and MODEL_NAME only
+    api_base_url = os.getenv("API_BASE_URL", "https://api.groq.com/openai/v1")
+    model_name = os.getenv("MODEL_NAME", "llama-3.3-70b-versatile")
+    hf_token = os.getenv("HF_TOKEN") or os.getenv("API_KEY") or os.getenv("OPENAI_API_KEY")
     
-    if not api_base_url or not model_name or not hf_token:
-        print("ERROR: Missing required environment variables", flush=True)
+    # HF_TOKEN is required (no default)
+    if not hf_token:
+        print("ERROR: Missing required HF_TOKEN environment variable", flush=True)
+        print("Optional (have defaults):", flush=True)
+        print("  API_BASE_URL  — defaults to: https://api.groq.com/openai/v1", flush=True)
+        print("  MODEL_NAME    — defaults to: llama-3.3-70b-versatile", flush=True)
         print("Required:", flush=True)
-        print("  API_BASE_URL  — API endpoint", flush=True)
-        print("  MODEL_NAME    — Model identifier", flush=True)
-        print("  HF_TOKEN      — Authentication key", flush=True)
+        print("  HF_TOKEN      — Authentication key for API (required)", flush=True)
         return 1
     
     # Debug: Show what was read
