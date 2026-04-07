@@ -78,10 +78,15 @@ def main() -> int:
         
         return 0
         
+    except KeyboardInterrupt:
+        print("[INFO] Interrupted by user", flush=True)
+        return 130
+        
     except Exception as e:
-        print(f"[ERROR] Inference failed: {e}", flush=True)
+        print(f"[ERROR] Inference failed: {type(e).__name__}: {e}", flush=True)
         import traceback
-        traceback.print_exc()
+        traceback.print_exc(file=sys.stdout)
+        sys.stdout.flush()
         return 2
 
 
