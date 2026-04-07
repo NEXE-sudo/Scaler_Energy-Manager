@@ -80,12 +80,24 @@ def main() -> int:
         
     except KeyboardInterrupt:
         print("[INFO] Interrupted by user", flush=True)
+        sys.stdout.flush()
         return 130
         
     except Exception as e:
         print(f"[ERROR] Inference failed: {type(e).__name__}: {e}", flush=True)
         import traceback
         traceback.print_exc(file=sys.stdout)
+        sys.stdout.flush()
+        
+        # Output minimal valid structured format on error
+        print("\n[INFO] Outputting error-state results...", flush=True)
+        try:
+            for task_id in ["easy", "medium", "hard"]:
+                print(f"[START] task={task_id} env=energy-grid-openenv model={model_name}", flush=True)
+                print(f"[END] success=false steps=0 score=0.0 rewards=", flush=True)
+        except Exception as inner_e:
+            print(f"[ERROR] Even fallback output failed: {inner_e}", flush=True)
+        
         sys.stdout.flush()
         return 2
 
