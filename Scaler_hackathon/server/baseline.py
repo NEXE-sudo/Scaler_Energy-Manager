@@ -406,8 +406,9 @@ def _apply_control_layer(
     if obs.task_id in ("easy", "medium"):
         action.plant_action = "none"
 
-    # Block close_coal on any task — too dangerous to allow
-    if action.plant_action == "close_coal":
+    # Allow coal closure in Hard task (now has capital recovery ~50% salvage)
+    # Easy/Medium still block it since no salvage value system there
+    if action.plant_action == "close_coal" and obs.task_id != "hard":
         action.plant_action = "none"
 
     # Block emergency boost spam — only if coal is damaged (not during outage)

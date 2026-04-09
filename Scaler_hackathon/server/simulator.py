@@ -516,6 +516,9 @@ def step_coal(
 
         coal_state.output_mw = min(new_output, coal_state.max_mw)
 
+    # CRITICAL FIX: Absolute ceiling of 750 MW (600 base + 150 emergency boost max)
+    coal_state.output_mw = min(750.0, coal_state.output_mw)
+    
     return coal_state.output_mw
 
 
@@ -902,6 +905,7 @@ def process_plant_action(
         state.coal.online = False
         state.coal.output_mw = 0.0
         state.capital_budget -= COAL_CLOSE_COST
+        state.capital_budget += 150.0  # 50% salvage value recovery (~150 of 300 cost)
         return None
 
     spec = PLANT_BUILD_SPECS.get(action_str)
@@ -1037,6 +1041,16 @@ def compute_reward(
         nuclear_mwh = state.nuclear.output_mw
         reward -= 0.0001 * nuclear_mwh * NUCLEAR_FUEL_COST
 
+    # ---- RENEWABLE ENERGY BONUS (NEW: incentivize clean generation) ----
+    # Provide positive rewards for using wind, solar, hydro
+    wind_output = state.wind.output_mw if state.wind.available else 0.0
+    solar_output = state.solar.output_mw if state.solar.available else 0.0
+    hydro_output = state.hydro.output_mw if state.hydro.available else 0.0
+    
+    reward += 0.015 * wind_output    # 1.5¢/MW wind bonus
+    reward += 0.020 * solar_output   # 2¢/MW solar bonus (higher value due to scarcity)
+    reward += 0.010 * hydro_output   # 1¢/MW hydro bonus
+    
     # ---- Prosumer feed-in credit ----
     if feedin_mw > 0:
         reward += 0.002 * feedin_mw
