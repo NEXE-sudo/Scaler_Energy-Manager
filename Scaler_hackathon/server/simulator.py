@@ -491,13 +491,14 @@ def step_coal(
 
     # Emergency boost (overrides normal ramp limits)
     if emergency_boost:
-        # Apply damage FIRST to capacity, then boost from damaged capacity
+        # Boost target is always based on BASE capacity (600 + 150 = 750), not damaged capacity
+        boost_target = COAL_MAX_MW + COAL_EMERGENCY_BOOST_CEILING_MW
+        # Apply damage to current max
         coal_state.max_mw = max(
             COAL_MIN_MW,
             coal_state.max_mw - COAL_BOOST_DAMAGE_MW,
         )
-        # Now calculate boost target from damaged max
-        boost_target = coal_state.max_mw + COAL_EMERGENCY_BOOST_CEILING_MW
+        # Increase output toward boost target (capped at 750)
         coal_state.output_mw = min(boost_target, coal_state.output_mw + COAL_EMERGENCY_BOOST_INCREMENT_MW)
         coal_state.boost_damage_steps = COAL_BOOST_DAMAGE_STEPS
     else:
