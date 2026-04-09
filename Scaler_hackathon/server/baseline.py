@@ -268,16 +268,29 @@ def _parse_action(response_text: str) -> EnergyGridAction:
     """
     Extract a well‑formed JSON ACTION block from the LLM response.
     Handles:
+        - empty/whitespace responses
         - markdown fences (```, ```json)
         - single quotes → double quotes
         - trailing commas
         - Python booleans (True/False)
         - multi‑line JSON
+        - null values
     Returns a fully‑validated EnergyGridAction; on failure returns a
     safe default (all zeros / idle) and prints a warning.
     """
+    # Handle empty or pure whitespace responses
+    if not response_text or not response_text.strip():
+        print("[WARN] Parser failed – empty response from model")
+        return EnergyGridAction()  # safe default (no‑op)
+    
     # 1️⃣ strip markdown fences and surrounding whitespace
     txt = re.sub(r'^```[a-z]*\n|```$', '', response_text.strip(), flags=re.MULTILINE)
+    txt = txt.strip()  # Remove any extra whitespace after fence removal
+
+    # If it's now empty, return default
+    if not txt:
+        print("[WARN] Parser failed – empty after stripping markdown")
+        return EnergyGridAction()
 
     # 2️⃣ balanced‑brace extraction (find the first complete JSON object)
     def extract_json(s: str) -> Optional[str]:
@@ -306,19 +319,26 @@ def _parse_action(response_text: str) -> EnergyGridAction:
         return EnergyGridAction()      # safe default (no‑op)
 
     # 3️⃣ normalise the JSON text
-    raw = raw.replace("'", '"')
-    raw = re.sub(r',\s*}', '}', raw)                     # strip trailing commas
+    raw = raw.replace("'", '"')  # Single quotes to double quotes
+    raw = re.sub(r',\s*}', '}', raw)                     # Strip trailing commas
+    raw = re.sub(r',\s*]', ']', raw)                     # Strip trailing commas in arrays
     raw = re.sub(r'\bTrue\b', 'true', raw, flags=re.I)   # Python bool → JSON bool
     raw = re.sub(r'\bFalse\b', 'false', raw, flags=re.I)
+    raw = re.sub(r'\bNone\b', 'null', raw, flags=re.I)   # Python None → JSON null
+    # Handle unquoted string values that might appear
+    raw = re.sub(r':\s*([a-zA-Z_][a-zA-Z0-9_]*)(?=[,}])', r': "\1"', raw)
 
     try:
         payload = json.loads(raw)
         return _dict_to_action(payload)
-    except (json.JSONDecodeError, Exception) as exc:
-        print("[WARN] JSON decode error while parsing ACTION:", exc)
+    except json.JSONDecodeError as exc:
+        print(f"[WARN] JSON decode error while parsing ACTION: {exc}")
         print("[WARN] Attempted JSON (first 200 chars):")
         print(raw[:200])
         return EnergyGridAction()      # safe default
+    except Exception as exc:
+        print(f"[WARN] Unexpected error parsing action: {exc}")
+        return EnergyGridAction()  # safe default
 
 def _dict_to_action(data: Dict[str, Any]) -> EnergyGridAction:
     """
@@ -477,6 +497,12 @@ def run_task(
         step_count += 1
         reward = obs.step_reward or 0.0
         rewards_list.append(reward)
+        
+        # Validate observation has sensible values (debug helper)
+        if obs.demand_mw == 0 and step_count > 1:
+            print(f"[DEBUG] Step {step_count}: demand_mw is zero (unusual)", flush=True)
+        if obs.coal_output_mw == 0 and obs.coal_online and step_count > 1:
+            print(f"[DEBUG] Step {step_count}: coal offline but coal_online=True", flush=True)
 
         # Display detailed state after step
         if verbose:
@@ -656,7 +682,7 @@ def run_baseline_agent(
         print(f"  Model: {model}")
         print(f"  Tasks: {task_ids}")
 
-    env = EnergyGridEnvironment(normalize=True)
+    env = EnergyGridEnvironment(normalize=False)
 
     results: Dict[str, Any] = {}
     summary_scores: Dict[str, float] = {}
