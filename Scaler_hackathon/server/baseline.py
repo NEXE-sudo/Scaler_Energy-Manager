@@ -615,21 +615,34 @@ def _call_llm_with_retry(
             )
             # Extract the assistant's content
             content = response.choices[0].message.content or ""
-            if not content.strip():
-                raise ValueError("Empty response from model — possible TPM burst")
-
-            # ----- DEBUG: print token usage (optional) -----
+            
+            # ✅ PRINT TOKENS FIRST (before any validation checks)
+            # This ensures we see token usage even if content is empty/invalid
             if verbose and hasattr(response, "usage"):
                 usage = response.usage
                 print(
                     f"  [DEBUG] Tokens – prompt:{usage.prompt_tokens} "
                     f"completion:{usage.completion_tokens} total:{usage.total_tokens}"
                 )
+            
+            # ✅ NOW validate content (after logging tokens)
+            if not content.strip():
+                raise ValueError("Empty response from model — possible TPM burst")
                     
             return content
 
         except Exception as e:
             err = str(e).lower()
+            
+            # ✅ ALSO PRINT TOKENS IN ERROR PATH if we got a response
+            # This shows token usage even when the response was invalid
+            if verbose and 'response' in locals() and hasattr(response, "usage"):
+                usage = response.usage
+                print(
+                    f"  [DEBUG] Error path – Tokens – prompt:{usage.prompt_tokens} "
+                    f"completion:{usage.completion_tokens} total:{usage.total_tokens}"
+                )
+            
             is_rate_limit = "rate" in err or "429" in err or "limit" in err
 
             if is_rate_limit and attempt < max_retries - 1:
