@@ -9,6 +9,7 @@
 ## Problem Statement
 
 The baseline energy grid agent was violating physical constraints:
+
 - **Observed**: "Coal: 700/550 MW" (output exceeding maximum)
 - **Impact**: Violated grid physics, unrealistic power generation
 - **Frequency**: Occurred at step 19 of initial runs, cascading failures afterward
@@ -26,7 +27,8 @@ if emergency_boost:
     coal_state.max_mw -= COAL_BOOST_DAMAGE_MW
 ```
 
-**Problem**: 
+**Problem**:
+
 1. Boost output to 700 MW (600 + 100)
 2. Then reduce max capacity to 550 MW (600 - 50)
 3. Result: output (700) > max (550) → violation
@@ -73,12 +75,14 @@ if emergency_boost:
 Created comprehensive test harness validating three scenarios:
 
 #### Test 1: Normal Ramp Within Limits ✅
+
 - Input: 400 MW → +100 delta
 - Output: 500 MW
 - Max: 600 MW
 - Result: PASS (500 ≤ 600)
 
 #### Test 2: Emergency Boost with Damage ✅
+
 - Initial: 500 MW output, 600 MW max
 - Emergency boost: True
 - After boost: 600 MW output
@@ -86,6 +90,7 @@ Created comprehensive test harness validating three scenarios:
 - Result: PASS (600 ≤ 750 absolute ceiling, damage applied)
 
 #### Test 3: Cumulative Damage (3 boosts) ✅
+
 - Iteration 0: Output 500 MW, Max 550 MW (after 1st damage)
 - Iteration 1: Output 550 MW, Max 500 MW (after 2nd damage)
 - Iteration 2: Output 600 MW, Max 450 MW (after 3rd damage)
@@ -94,6 +99,7 @@ Created comprehensive test harness validating three scenarios:
 ### Integration Test: Partial Inference Run
 
 Ran baseline agent on easy task with fixes applied:
+
 ```
 Step 1: Coal: 417/600 MW ✓
 Step 2: Coal: 398/600 MW ✓
@@ -103,6 +109,7 @@ Step 4: Coal: 400/600 MW ✓
 ```
 
 **Observations**:
+
 - No "700/550 MW" violations observed
 - Coal properly constrained within 600 MW maximum
 - Emergency boost mechanism working within absolute limits
@@ -110,17 +117,20 @@ Step 4: Coal: 400/600 MW ✓
 ## Impact Assessment
 
 ### What Changed
+
 - **Files modified**: `server/simulator.py` (step_coal function)
 - **Lines changed**: 10 (reordered boost logic)
 - **Complexity**: No increase (same operations, better order)
 
 ### Benefits
+
 1. ✅ Eliminates constraint violations (700/550 MW problem fixed)
 2. ✅ Physically realistic power generation
 3. ✅ Maintains emergency override capability (can still reach 750 MW when needed)
 4. ✅ Damage system still works (reduces future capacity)
 
 ### No Breaking Changes
+
 - Normal ramping (non-emergency): Unchanged
 - Startup/shutdown sequence: Unchanged
 - Rate limiting: Unchanged
@@ -129,11 +139,13 @@ Step 4: Coal: 400/600 MW ✓
 ## Code Quality
 
 ### Test Coverage
+
 - 3 unit tests covering normal and emergency scenarios
 - Cumulative damage testing validates repeated use cases
 - All tests passing
 
 ### Documentation
+
 - Added detailed comments explaining boost target semantics
 - Clear explanation of why base max (not damaged max) is used for ceiling
 
@@ -148,11 +160,13 @@ e8d2c5a Fix coal capacity violations by applying damage before boost
 ## Remaining Known Issues
 
 ### API Rate Limiting
+
 - Groq 100K tokens/day limit hit during full inference (~99K tokens used)
 - Prevented completion of full 3-task inference run
 - **Not related to coal constraint fix** - fix verified separately
 
 ### Recommended Next Steps
+
 1. Wait for rate limit reset (7+ minutes) to run full inference
 2. Measure performance improvements from renewable incentives (separate PR)
 3. Test capital recovery system in Hard task
