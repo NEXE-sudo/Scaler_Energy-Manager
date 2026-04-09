@@ -184,6 +184,22 @@ class EnergyGridEnvironment(Environment):
         self._last_step_result = {}
         self._plants_built = []
 
+        # Compute initial demand and other time-dependent values for step 0
+        result = simulator_step(
+            state=self._sim,
+            coal_delta=0,
+            hydro_delta=0,
+            nuclear_delta=0,
+            battery_mode="idle",
+            emergency_coal_boost=False,
+            demand_response_mw=0,
+            plant_action=None,
+            event_schedule=self._event_schedule,
+            event_end_schedule=self._event_end_schedule,
+            task_id=task_id,
+        )
+        self._last_step_result = result
+
         return self._build_observation(reward=0.0, done=False)
 
     def step(self, action: EnergyGridAction) -> EnergyGridObservation:  # type: ignore[override]
