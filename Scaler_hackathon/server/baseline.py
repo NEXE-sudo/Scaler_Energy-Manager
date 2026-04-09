@@ -121,7 +121,7 @@ def _build_client() -> tuple[OpenAI, str]:
 # Token budget (small enough to force a complete ACTION line)
 # ---------------------------------------------------------------------------
 
-MAX_TOKENS = 512  # just JSON ACTION output, no REASON (saves tokens)
+MAX_TOKENS = 2048  # Increased from 512 to accommodate extended thinking + JSON output
 
 # ---------------------------------------------------------------------------
 # Prompt builder
@@ -314,8 +314,9 @@ def _parse_action(response_text: str) -> EnergyGridAction:
 
     if raw is None:
         print("[WARN] Parser failed – no JSON object found")
+        print(f"[WARN] Response length: {len(txt)} chars")
         print("[WARN] Raw response (first 300 chars):")
-        print(txt[:300])
+        print(repr(txt[:300]))
         return EnergyGridAction()      # safe default (no‑op)
 
     # 3️⃣ normalise the JSON text
@@ -614,7 +615,17 @@ def _call_llm_with_retry(
                 messages=[{"role": "system", "content": system}, *messages],
             )
             # Extract the assistant's content
+            # Note: Some models (Groq) use "reasoning" field for extended thinking
+            # Try content first, fall back to reasoning if content is empty
             content = response.choices[0].message.content or ""
+            
+            # If content is empty but reasoning exists, use reasoning as the response
+            if not content.strip() and hasattr(response.choices[0].message, 'reasoning'):
+                reasoning = response.choices[0].message.reasoning or ""
+                if reasoning.strip():
+                    content = reasoning
+                    if verbose:
+                        print(f"  [DEBUG] Using reasoning field ({len(reasoning)} chars) – finish_reason='{response.choices[0].finish_reason}'")
             
             # ✅ PRINT TOKENS FIRST (before any validation checks)
             # This ensures we see token usage even if content is empty/invalid
@@ -624,6 +635,11 @@ def _call_llm_with_retry(
                     f"  [DEBUG] Tokens – prompt:{usage.prompt_tokens} "
                     f"completion:{usage.completion_tokens} total:{usage.total_tokens}"
                 )
+            
+            # DEBUG: If content is still empty, log raw response
+            if not content.strip() and verbose:
+                print(f"  [DEBUG] Raw response choices[0]: {response.choices[0]}")
+                print(f"  [DEBUG] Content value: {repr(content)}")
             
             # ✅ NOW validate content (after logging tokens)
             if not content.strip():
