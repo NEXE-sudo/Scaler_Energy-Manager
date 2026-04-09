@@ -45,7 +45,7 @@ def main() -> int:
     
     # Load environment variables with defaults for API_BASE_URL and MODEL_NAME only
     api_base_url = os.getenv("API_BASE_URL", "https://api.groq.com/openai/v1")
-    model_name = os.getenv("MODEL_NAME", "openai/gpt-oss-20b")
+    model_name = os.getenv("MODEL_NAME", "llama-3.3-70b-versatile")
     hf_token = os.getenv("HF_TOKEN") or os.getenv("API_KEY") or os.getenv("OPENAI_API_KEY")
     
     # HF_TOKEN is required (no default)
@@ -53,7 +53,7 @@ def main() -> int:
         print("ERROR: Missing required HF_TOKEN environment variable", flush=True)
         print("Optional (have defaults):", flush=True)
         print("  API_BASE_URL  — defaults to: https://api.groq.com/openai/v1", flush=True)
-        print("  MODEL_NAME    — defaults to: openai/gpt-oss-20b", flush=True)
+        print("  MODEL_NAME    — defaults to: llama-3.3-70b-versatile", flush=True)
         print("Required:", flush=True)
         print("  HF_TOKEN      — Authentication key for API (required)", flush=True)
         return 1

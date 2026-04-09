@@ -121,7 +121,7 @@ def _build_client() -> tuple[OpenAI, str]:
 # Token budget (small enough to force a complete ACTION line)
 # ---------------------------------------------------------------------------
 
-MAX_TOKENS = 2048  # Increased from 512 to accommodate extended thinking + JSON output
+MAX_TOKENS = 512  # Llama model doesn't use extended thinking, 512 is sufficient
 
 # ---------------------------------------------------------------------------
 # Prompt builder
