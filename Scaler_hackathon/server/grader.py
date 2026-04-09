@@ -331,7 +331,6 @@ def grade_episode(log: EpisodeLog) -> GradeResult:
             "reliability": weights["reliability"] * reliability,
             "cost_efficiency": weights["cost_efficiency"] * cost_eff,
             "battery_health": weights["battery_health"] * battery,
-            "reservoir_management": weights["reservoir_management"] * reservoir,
         }
     else:  # hard
         weighted = {

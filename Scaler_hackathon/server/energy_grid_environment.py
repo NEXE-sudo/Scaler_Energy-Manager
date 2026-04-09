@@ -198,6 +198,8 @@ class EnergyGridEnvironment(Environment):
             event_end_schedule=self._event_end_schedule,
             task_id=task_id,
         )
+        # Reset step counter to 0 since simulator_step incremented it during initial demand calculation
+        self._sim.step = 0
         self._last_step_result = result
 
         return self._build_observation(reward=0.0, done=False)
@@ -238,9 +240,6 @@ class EnergyGridEnvironment(Environment):
         )
         self._last_step_result = result
 
-        # Track newly completed plants
-        for entry in self._sim.construction_queue:
-            pass  # construction_queue only holds in-progress items
         # Detect newly available plants by comparing before/after
         # (advance_construction is called inside simulator_step)
         for ptype in ["solar", "wind", "hydro", "nuclear"]:

@@ -122,6 +122,7 @@ def _build_client() -> tuple[OpenAI, str]:
 # ---------------------------------------------------------------------------
 
 MAX_TOKENS = 512  # Llama model doesn't use extended thinking, 512 is sufficient
+PLANNER_MAX_TOKENS = 1024  # Higher budget for structured 5-part plan to avoid truncation in hard task
 
 # ---------------------------------------------------------------------------
 # Prompt builder
@@ -462,7 +463,7 @@ def run_task(
             system="You are a strategic planner. Output a concise operational plan only.",
             messages=[{"role": "user", "content": _build_planner_prompt(obs)}],
             max_retries=2,  # faster failure recovery
-            max_tokens=MAX_TOKENS,
+            max_tokens=PLANNER_MAX_TOKENS,
             verbose=verbose,
         )
         plan = planner_response.strip()
