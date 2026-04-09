@@ -666,7 +666,7 @@ def run_baseline_agent(
         print(f"  Model: {model}")
         print(f"  Tasks: {task_ids}")
 
-    env = EnergyGridEnvironment()
+    env = EnergyGridEnvironment(normalize=True)
 
     results: Dict[str, Any] = {}
     summary_scores: Dict[str, float] = {}

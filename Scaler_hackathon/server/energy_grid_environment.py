@@ -35,6 +35,11 @@ except ImportError:
     from models import EnergyGridAction, EnergyGridObservation
 
 try:
+    from .normalization import normalize_observation
+except ImportError:
+    from server.normalization import normalize_observation
+
+try:
     from .simulator import (
         GridSimState,
         build_initial_state,
@@ -98,7 +103,7 @@ class EnergyGridEnvironment(Environment):
 
     SUPPORTS_CONCURRENT_SESSIONS: bool = True
 
-    def __init__(self) -> None:
+    def __init__(self, normalize: bool = False) -> None:
         self._state = State(episode_id=str(uuid4()), step_count=0)
         self._task_id: str = "easy"
         self._sim: Optional[GridSimState] = None
@@ -108,6 +113,7 @@ class EnergyGridEnvironment(Environment):
         self._last_grade: Optional[GradeResult] = None
         self._last_step_result: Dict[str, Any] = {}
         self._plants_built: List[str] = []
+        self._normalize = normalize
 
     # ------------------------------------------------------------------
     # OpenEnv interface
@@ -354,7 +360,7 @@ class EnergyGridEnvironment(Environment):
             for entry in sim.construction_queue
         ]
 
-        return EnergyGridObservation(
+        obs = EnergyGridObservation(
             # Demand & time
             demand_mw=round(sim.demand_mw, 2),
             time_of_day=hour,
@@ -430,6 +436,14 @@ class EnergyGridEnvironment(Environment):
             episode_ended_early=sim.blackout_this_step,
             task_id=self._task_id,
         )
+
+        # Apply normalization if enabled
+        if self._normalize:
+            obs_dict = obs.model_dump()
+            normalized_dict = normalize_observation(obs_dict, self._task_id)
+            obs = EnergyGridObservation(**normalized_dict)
+
+        return obs
 
     def _log_step(self, result: Dict[str, Any]) -> None:
         """Append a StepLog entry for the current step."""
