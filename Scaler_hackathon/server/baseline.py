@@ -451,7 +451,6 @@ def run_task(
     system_prompt = _build_system_prompt(task_id=task_id, plan=plan)
     total_reward = 0.0
     step_count = 0
-    reason_log: List[str] = []
     rewards_list: List[float] = []  # Track all rewards for structured logging
 
     for step in range(total_steps):
@@ -466,14 +465,6 @@ def run_task(
             max_retries=2,  # faster failure recovery
             verbose=verbose,
         )
-
-        # Extract REASON for logging
-        # reason_match = re.search(r"REASON\s*:\s*(.+?)(?:ACTION|$)", response_text, re.DOTALL)
-        # if reason_match:
-        #     reason = reason_match.group(1).strip()[:120]
-        #     reason_log.append(f"Step {step:02d}: {reason}")
-        #     if verbose:
-        #         print(f"  Step {step:02d} | REASON: {reason}")
 
         # Parse + sanitise action
         action = _parse_action(response_text)
@@ -568,7 +559,6 @@ def run_task(
         "total_steps": total_steps,
         "total_reward": round(total_reward, 4),
         "metadata": grade.get("metadata", {}),
-        "reasoning_samples": reason_log[:5],
     }
 
 # ---------------------------------------------------------------------------
