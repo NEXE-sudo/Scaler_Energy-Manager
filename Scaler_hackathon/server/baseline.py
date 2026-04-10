@@ -128,10 +128,10 @@ PLANNER_MAX_TOKENS = 1024  # Higher budget for structured 5-part plan to avoid t
 # Prompt builder
 # ---------------------------------------------------------------------------
 
-def _build_system_prompt(task_id: str = "easy", plan: str = "") -> str:
+def _build_system_prompt(task_id: str = "easy", plan: str = "", step: int = 0) -> str:
     """
     Build the system prompt for the executor.
-    For Hard task, injects the planner output.
+    For Hard task, injects the planner output only up to step 20 to save tokens.
     """
     # -------------------------------------------------------------------
     # Compact prompt – no REASON requirement (saves ~30% tokens)
@@ -150,17 +150,13 @@ If gap > 0 → use battery discharge first, then increase coal, then emergency b
 If gap < 0 (oversupply > 20 MW) → reduce coal immediately, or charge battery.
 Never leave a positive gap unresolved.
 Operational strategy:
-- Never leave unmet demand.
-- Avoid overproduction (>20 MW).
-- Prefer battery discharge over increasing coal whenever battery > 20%.
-- Use battery actively for short-term balancing, not just emergencies.
-- Preserve battery above 20% unless preventing blackout.
-- Minimise coal usage aggressively — high cost and CO2 emissions.
-- Use renewables whenever available.
-- If demand is met, reduce coal before anything else.
+- If gap > 0: discharge battery first (if >20%), then raise coal, boost only for blackout.
+- If gap < 0 and oversupply >20 MW: reduce coal first, then charge battery.
+- Keep battery above 20% SoC. Minimise coal when demand is met.
 """
 
-    if task_id == "hard" and plan:
+    # Only inject plan for hard task steps 0-19 to save ~15k tokens in later steps
+    if task_id == "hard" and plan and step < 20:
         base += f"\n\nSTRATEGIC PLAN (follow this unless state forces deviation):\n{plan}"
     return base
 
@@ -252,14 +248,15 @@ def _build_user_prompt(obs: EnergyGridObservation, task_id: str) -> str:
     
     # Hard task: include budget, events, and construction status
     if task_id == "hard":
-        construction_str = ", ".join(
-            f"{p['type']} ({p['steps_remaining']} steps left)"
-            for p in obs.plants_under_construction
-        ) or "none"
+        if obs.plants_under_construction:
+            construction_str = ", ".join(
+                f"{p['type']} ({p['steps_remaining']} steps left)"
+                for p in obs.plants_under_construction
+            )
+            prompt += f" | Building: {construction_str}"
         prompt += (
             f" | Budget: {obs.capital_budget:.0f} | "
-            f"Events: {', '.join(obs.active_events) if obs.active_events else 'none'} | "
-            f"Building: {construction_str}"
+            f"Events: {', '.join(obs.active_events) if obs.active_events else 'none'}"
         )
     
     return prompt
@@ -450,6 +447,10 @@ def run_task(
     # Reset environment
     obs = env.reset(task_id)
 
+    # Wall-clock timeout (18 min hard cap, leaves 2 min margin before 20-min budget)
+    episode_start = time.time()
+    EPISODE_TIMEOUT = 18 * 60
+
     # ------------------------------------------------------------------
     # Hard task – one‑shot planner
     # ------------------------------------------------------------------
@@ -464,6 +465,7 @@ def run_task(
             messages=[{"role": "user", "content": _build_planner_prompt(obs)}],
             max_retries=2,  # faster failure recovery
             max_tokens=PLANNER_MAX_TOKENS,
+            stop_at_json=False,  # Planner returns free-form text, not JSON
             verbose=verbose,
         )
         plan = planner_response.strip()
@@ -471,12 +473,18 @@ def run_task(
             print(f"  [PLANNER] Plan generated ({len(plan)} chars).")
             print(f"  {plan[:300]}{'...' if len(plan) > 300 else ''}")
 
-    system_prompt = _build_system_prompt(task_id=task_id, plan=plan)
     total_reward = 0.0
     step_count = 0
     rewards_list: List[float] = []  # Track all rewards for structured logging
 
     for step in range(total_steps):
+        # Wall-clock timeout check before each LLM call
+        if time.time() - episode_start > EPISODE_TIMEOUT:
+            print(f"[WARN] Episode timeout reached at step {step}, stopping early", flush=True)
+            break
+
+        # Rebuild system prompt each step: drop plan after step 20 to save tokens
+        system_prompt = _build_system_prompt(task_id=task_id, plan=plan, step=step)
         user_prompt = _build_user_prompt(obs, task_id)
 
         # LLM call — stateless, no conversation history
@@ -602,6 +610,7 @@ def _call_llm_with_retry(
     max_retries: int = 3,
     verbose: bool = False,
     max_tokens: int = MAX_TOKENS,
+    stop_at_json: bool = True,
 ) -> str:
     """
     Call the LLM API with exponential back‑off on rate‑limit errors.
@@ -614,6 +623,7 @@ def _call_llm_with_retry(
                 model=model,
                 max_tokens=max_tokens,
                 temperature=0.0,
+                stop=["}"] if stop_at_json else None,
                 messages=[{"role": "system", "content": system}, *messages],
             )
             # Extract the assistant's content
@@ -732,10 +742,6 @@ def run_baseline_agent(
         )
         results[task_id] = result
         summary_scores[task_id] = result["score"]
-
-        # Small pause between tasks (respect rate limits)
-        if task_id != task_ids[-1]:
-            time.sleep(10)
 
     # --------------------------------------------------------------
     # Summary output

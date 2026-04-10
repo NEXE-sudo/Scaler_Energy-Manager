@@ -202,9 +202,6 @@ class EnergyGridEnv(
             reward=payload.get("reward"),
             episode_ended_early=obs_data.get("episode_ended_early", False),
             task_id=obs_data.get("task_id", "easy"),
-
-            # Pass through metadata if present
-            metadata=obs_data.get("metadata", {}),
         )
 
         return StepResult(

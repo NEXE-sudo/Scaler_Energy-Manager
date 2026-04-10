@@ -350,9 +350,9 @@ class EnergyGridEnvironment(Environment):
         if sim is None:
             return EnergyGridObservation(done=done, reward=reward)
 
-        # Use (step - 1) because step was already incremented in simulator_step
-        # This ensures time_of_day matches demand/solar computed at that hour
-        hour = (sim.step - 1) % 24
+        # Compute hour from step counter (step % 24 gives the correct hour)
+        # This matches the hour used in compute_demand within simulator_step
+        hour = sim.step % 24
         result = self._last_step_result
 
         # Spinning reserve

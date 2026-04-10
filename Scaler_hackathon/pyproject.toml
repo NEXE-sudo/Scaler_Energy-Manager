@@ -15,9 +15,6 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn>=0.24.0",
 
-    # Simulation & numerics
-    "numpy>=1.26.0",
-
     # LLM baseline (OpenAI-compatible client — works with Groq)
     "openai>=1.30.0",
 

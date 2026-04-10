@@ -27,6 +27,7 @@ Systems modelled:
 
 from __future__ import annotations
 
+import logging
 import math
 import random
 from dataclasses import dataclass, field
@@ -856,8 +857,10 @@ def apply_event_start(event: str, state: GridSimState) -> None:
 def apply_event_end(event: str, state: GridSimState) -> None:
     """Restore state when an event expires."""
     if event == "coal_outage":
-        # Restore coal max, but preserve any boost damage that was applied independently
-        state.coal.max_mw = COAL_MAX_MW
+        # Only restore coal max if no boost damage is currently active
+        # Otherwise the damage window gets cut short
+        if state.coal.boost_damage_steps == 0:
+            state.coal.max_mw = COAL_MAX_MW
     elif event == "price_spike":
         state.coal_price = 1.0
     elif event == "grid_fault":
@@ -981,6 +984,7 @@ def compute_reward(
     task_id: str,
     feedin_mw: float = 0.0,
     demand_response_mw: float = 0.0,
+    emergency_coal_boost: bool = False,
 ) -> float:
     """
     Compute step reward.
@@ -1021,14 +1025,18 @@ def compute_reward(
     if demand_response_mw > 0 and task_id != "hard":
         reward -= 0.05 * demand_response_mw  # soft penalty
 
-    if state.total_demand_response > 500:
+    # Penalty applies only when crossing the 500 MW threshold (not every step after)
+    # Check: did we just cross 500 MW this step?
+    if state.total_demand_response > 500 and (state.total_demand_response - demand_response_mw) <= 500:
         reward -= 5.0
 
     if unmet < 3 and over < 10:
         reward += 0.2
 
     # ---- Emergency boost penalty ----
-    reward -= 3.0 * (state.boost_used_count ** 1.5)
+    # Apply penalty only on the step boost is actually used, not permanently
+    if emergency_coal_boost:
+        reward -= 3.0
 
     # ---- Generation costs ----
     coal_mwh = state.coal.output_mw * (1.0 / 1.0)   # 1 step = 1 MWh equivalent
@@ -1091,7 +1099,8 @@ def _compute_spinning_reserve(state: GridSimState) -> float:
     if state.coal.online and state.coal.available:
         reserve += state.coal.max_mw - state.coal.output_mw
 
-    if state.hydro.available:
+    # Only count hydro reserve if reservoir has water available
+    if state.hydro.available and state.hydro.reservoir_mwh > 0:
         reserve += HYDRO_MAX_MW - state.hydro.output_mw
 
     if state.nuclear.available and state.nuclear.online:
@@ -1203,7 +1212,6 @@ def simulator_step(
     # ---- Hard cap on emergency boost usage ----
     if state.boost_used_count >= 5:
         emergency_coal_boost = False
-        import logging
         logging.warning("Emergency coal boost blocked: boost_used_count >= 5")
 
     # ---- Clamp delta FIRST (this is the actual applied control) ----
@@ -1315,6 +1323,7 @@ def simulator_step(
         task_id=task_id,
         feedin_mw=feedin_mw,
         demand_response_mw=dr_mw,
+        emergency_coal_boost=emergency_coal_boost,
     )
 
     # 18. Economics & emissions
