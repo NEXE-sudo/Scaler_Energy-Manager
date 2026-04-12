@@ -313,8 +313,8 @@ def _parse_action(response_text: str) -> EnergyGridAction:
     if raw is None:
         print("[WARN] Parser failed – no JSON object found")
         print(f"[WARN] Response length: {len(txt)} chars")
-        print("[WARN] Raw response (first 300 chars):")
-        print(repr(txt[:300]))
+        print("[WARN] Raw response:")
+        print(repr(txt))
         return EnergyGridAction()      # safe default (no‑op)
 
     # 3️⃣ normalise the JSON text
@@ -332,8 +332,8 @@ def _parse_action(response_text: str) -> EnergyGridAction:
         return _dict_to_action(payload)
     except json.JSONDecodeError as exc:
         print(f"[WARN] JSON decode error while parsing ACTION: {exc}")
-        print("[WARN] Attempted JSON (first 200 chars):")
-        print(raw[:200])
+        print("[WARN] Attempted JSON:")
+        print(raw)
         return EnergyGridAction()      # safe default
     except Exception as exc:
         print(f"[WARN] Unexpected error parsing action: {exc}")
@@ -471,7 +471,7 @@ def run_task(
         plan = planner_response.strip()
         if verbose:
             print(f"  [PLANNER] Plan generated ({len(plan)} chars).")
-            print(f"  {plan[:300]}{'...' if len(plan) > 300 else ''}")
+            print(f"  {plan}")
 
     total_reward = 0.0
     step_count = 0

@@ -605,47 +605,45 @@ python server/baseline.py --output results.json
 
 ### Sample Baseline Output
 
-**Real run on April 2, 2026** with `llama-3.3-70b-versatile` via Groq API:
+**Real run on April 12, 2026** with `llama-3.3-70b-versatile` via Groq API:
 
 ```
 ============================================================
-BASELINE RESULTS (April 2, 2026 22:14:15)
+BASELINE RESULTS (April 12, 2026)
 ============================================================
 
-Task: EASY
-  Score: 0.1806
-  Steps: 24/24
-  Total Reward: -607.91
-  Blackout: False
-  Cost: 12.91
-  Emissions: 11623.5 tons
-  Plants Built: []
+Task: EASY (Baseline Dispatch)
+  Score: 0.4040
+  Steps: 8/24
+  Total Reward: -531.17
+  Blackout: True (at step 8)
+  Reliability: 33.3%
+  Cost Efficiency: 0.76
 
-Task: MEDIUM
-  Score: 0.3935
-  Steps: 7/48
-  Total Reward: -526.25
-  Blackout: True  (blackout at step 7)
-  Cost: 2.89
-  Emissions: 2604.6 tons
-  Plants Built: ['solar', 'wind']
+Task: MEDIUM (Renewable Integration)
+  Score: 0.3389
+  Steps: 15/48
+  Total Reward: -1121.02
+  Blackout: True (at step 15)
+  Reliability: 15.6%
+  Cost Efficiency: 0.82
 
-Task: HARD
-  Score: 0.3695
-  Steps: 26/72
-  Total Reward: -1117.80
-  Blackout: True  (blackout at step 26)
-  Cost: 18.70
-  Emissions: 11554.2 tons
-  Plants Built: ['solar', 'wind', 'hydro']
+Task: HARD (Full Grid Management)
+  Score: 0.3205
+  Steps: 9/72
+  Total Reward: -531.35
+  Blackout: True (at step 9)
+  Reliability: 6.3%
+  Cost Efficiency: 0.95
 
 ============================================================
 SUMMARY
 ============================================================
-  easy    : 0.1806
-  medium  : 0.3935
-  hard    : 0.3695
-  average : 0.3145
+  easy    : 0.4040  ████████
+  medium  : 0.3389  ██████
+  hard    : 0.3205  ██████
+  average : 0.3545
+============================================================
 ```
 
 **Key Observations:**
