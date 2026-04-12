@@ -603,121 +603,6 @@ python server/baseline.py --output results.json
 - Executor follows plan with real-time adjustments
 - Carefully tuned prompts to handle 72-step horizon and competing objectives
 
-### Sample Baseline Output
-
-**Real run on April 12, 2026** with `llama-3.3-70b-versatile` via Groq API:
-
-```
-============================================================
-BASELINE RESULTS (April 12, 2026)
-============================================================
-
-Task: EASY (Baseline Dispatch)
-  Score: 0.4040
-  Steps: 8/24
-  Total Reward: -531.17
-  Blackout: True (at step 8)
-  Reliability: 33.3%
-  Cost Efficiency: 0.76
-
-Task: MEDIUM (Renewable Integration)
-  Score: 0.3389
-  Steps: 15/48
-  Total Reward: -1121.02
-  Blackout: True (at step 15)
-  Reliability: 15.6%
-  Cost Efficiency: 0.82
-
-Task: HARD (Full Grid Management)
-  Score: 0.3205
-  Steps: 9/72
-  Total Reward: -531.35
-  Blackout: True (at step 9)
-  Reliability: 6.3%
-  Cost Efficiency: 0.95
-
-============================================================
-SUMMARY
-============================================================
-  easy    : 0.4040  ████████
-  medium  : 0.3389  ██████
-  hard    : 0.3205  ██████
-  average : 0.3545
-============================================================
-```
-
-**Key Observations:**
-
-- **Easy task**: Completed all 24 steps without blackout, but low score (0.18) due to high emissions and cost inefficiency
-- **Medium task**: Failed early with blackout at step 7 — insufficient renewable capacity despite building solar + wind
-- **Hard task**: Failed at step 26, likely during coal outage period (steps 23-25) when battery depleted
-- The agent built plants but too slowly — needs earlier construction decisions
-- Multi-hour planning horizon insufficient for this 24/48/72-step horizon
-
-### Environment Variables
-
-```bash
-# Required for baseline execution
-export API_BASE_URL="https://api.groq.com/openai/v1"    # or other OpenAI-compatible endpoint
-export MODEL_NAME="llama-3.3-70b-versatile"               # model identifier
-export OPENAI_API_KEY="gsk_..."  # or HF_TOKEN for Hugging Face
-
-# Then run
-python server/baseline.py
-```
-
-### Output Files
-
-Results are automatically saved to `outputs/baseline_<timestamp>.json`:
-
-```json
-{
-  "results": {
-    "easy": {
-      "score": 0.6823,
-      "reward": -18.7,
-      "steps": 24,
-      "unmet_demand_mwh": 42.3,
-      ...
-    },
-    "medium": {...},
-    "hard": {...}
-  },
-  "summary_scores": {
-    "easy": 0.6823,
-    "medium": 0.5456,
-    "hard": 0.7124
-  },
-  "average_score": 0.6468,
-  "model": "llama-3.3-70b-versatile",
-  "timestamp": "20260407_142530"
-}
-```
-
----
-
-## Baseline Scores
-
-| Task        | Score    | Steps | Blackout | Model                   | Date       | Notes               |
-| ----------- | -------- | ----- | -------- | ----------------------- | ---------- | ------------------- |
-| Easy        | **0.18** | 19/24 | **Yes**  | llama-3.3-70b-versatile | 2026-04-07 | Blackout at step 18 |
-| Medium      | **0.23** | 21/48 | **Yes**  | llama-3.3-70b-versatile | 2026-04-07 | Blackout at step 20 |
-| Hard        | **0.33** | 2/72  | **Yes**  | llama-3.3-70b-versatile | 2026-04-07 | Blackout at step 1  |
-| **Average** | **0.25** | —     | —        |                         | 2026-04-07 | All three tasks     |
-
-**Results file:** `outputs/baseline_20260407_031508.json`
-
-**Analysis:**
-
-- Average score of 0.25 shows stateless agent quickly exhausts coal capacity
-- All three tasks end with blackout — agent lacks multi-step planning to build capacity
-- Easy task fails managing demand spikes without reserve plants
-- Medium task fails managing summer peak demand (1000+ MW)
-- Hard task fails immediately at step 1 due to frequency instability
-- Stateless approach insufficient; frontier LLMs need planning + memory for >10 step horizons
-
-Run `python server/baseline.py` to reproduce or benchmark your improvements.
-
 ---
 
 ## Agent Reasoning Examples
@@ -1120,6 +1005,57 @@ energy-grid-openenv/
     ├── requirements.txt             # Server dependencies
     └── Dockerfile                   # Container definition
 ```
+
+---
+
+## Baseline Results
+
+**Model:** llama-3.3-70b-versatile (Groq)  
+**Date:** 2026-04-12  
+**Architecture:** Chain-of-thought + deterministic action parsing
+
+### Summary
+
+| Task    | Score     | Steps | Reliability | Cost Efficiency | Status |
+| ------- | --------- | ----- | ----------- | --------------- | ------ |
+| Easy    | 0.150     | 24    | 16.67%      | 12.51%          | ❌     |
+| Medium  | 0.415     | 8/48  | 8.33%       | 88.39%          | ❌     |
+| Hard    | 0.329     | 72/72 | 19.44%      | 45.16%          | ❌     |
+| **Avg** | **0.298** |       |             |                 |        |
+
+### Task-by-Task Analysis
+
+#### Easy: Baseline Dispatch
+
+- **Score:** 0.150 | **Total Reward:** -1,290.60
+- **Issue:** Agent failed to maintain reliability. Battery depleted early (by step 10), leaving only coal to meet demand. Peak demand (867 MW) exceeded maximum coal capacity (600 MW), resulting in massive blackouts in later steps.
+- **Key Failure:** No forward-looking strategy. Agent discharged battery too quickly in early, low-demand steps instead of preserving it for high demand periods.
+
+#### Medium: Renewable Integration
+
+- **Score:** 0.415 | **Total Reward:** -561.55 | **Blackout at step 7/8**
+- **Issue:** Episode terminated early due to critical underestimation of demand during weather shift. At step 8, wind and solar output plummeted while demand spiked (752 MW), and coal was reduced to 375 MW, leaving 245 MW unmet.
+- **Key Failure:** Aggressive coal reduction without sufficient reserve margin. Battery overcharged (100%) and unavailable when most needed. No weather anticipation.
+
+#### Hard: Full Grid Management
+
+- **Score:** 0.329 | **Total Reward:** -4,192.77
+- **Issue:** Strategic build plan (nuclear, hydro, wind) came too late to mitigate coal outage impact. Coal outage occurred around step 19-20 (nominal). Built plants were online but insufficient (total ~500 MW renewable vs 600+ MW demand during winter peak).
+- **Key Failure:** Ordered builds correctly but timed them poorly. Nuclear scheduled for step 15 but demand surge happened earlier. Battery drained to zero by step 14 and never recovered.
+
+### Why Scores Are Low
+
+1. **Battery mismanagement:** Agent doesn't understand that battery is strategic reserve, not tactical load-balancing tool.
+2. **No demand forecasting:** Cannot anticipate demand peaks (heatwaves, winter, time-of-day patterns).
+3. **Greedy cost optimization:** Reduces coal to 0 (cheap short-term) without reserves for spikes → blackouts (huge penalty).
+4. **Poor capital allocation:** Builds correct plants but wrong timing. Nuclear should start building by step 0 to be ready by step 15, not step 2.
+
+### Next Steps for Improvement
+
+- Add explicit demand forecast to context (15-20 hour lookahead)
+- Implement reserve margin rule: spinning_reserve ≥ 20% of anticipated demand
+- Reframe battery as "insurance" not "cost optimizer"
+- For hard task: compute critical path for builds (nuclear needs 15 steps, start at step 0)
 
 ---
 

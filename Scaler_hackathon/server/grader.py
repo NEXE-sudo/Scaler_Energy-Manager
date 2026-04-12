@@ -341,6 +341,20 @@ def grade_episode(log: EpisodeLog) -> GradeResult:
     total_score = sum(weighted.values())
     total_score = max(-0.05, min(1.0, total_score))
 
+    # Filter component_scores to only include task-relevant components
+    if task_id == "easy":
+        component_scores = {
+            "reliability": component_scores["reliability"],
+            "cost_efficiency": component_scores["cost_efficiency"],
+        }
+    elif task_id == "medium":
+        component_scores = {
+            "reliability": component_scores["reliability"],
+            "cost_efficiency": component_scores["cost_efficiency"],
+            "battery_health": component_scores["battery_health"],
+        }
+    # else: hard task returns all 7 components (no filtering needed)
+
     # Explicitly add frequency_stability: 0.0 to weights for easy and hard tasks
     # to reflect actual usage (computed but not weighted)
     if task_id in ("easy", "hard"):
