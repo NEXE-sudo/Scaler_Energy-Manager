@@ -786,14 +786,19 @@ def schedule_events(
             add_event(rng.randint(0, total_steps - 1), "rainfall")
 
     if task_id == "hard":
-        # Outage step is seeded-deterministic (seed=271 → step ~24), not truly random at runtime.
-        # The planner prompt says "steps 24–27" which matches this seed — do not change the seed
-        # without updating the prompt.
-        add_event(rng.randint(20, 35), "coal_outage")
+        # Coal outage: base range 20-35 with per-episode variance to prevent memorization
+        # Even with seeded RNG, add runtime variance window (±random offset)
+        coal_base = rng.randint(20, 35)
+        coal_variance = rng.randint(-3, 3)  # ±3 step variance per episode
+        coal_step = max(1, min(total_steps - 5, coal_base + coal_variance))
+        add_event(coal_step, "coal_outage")
 
-        # Nuclear trip (only if nuclear might be built)
+        # Nuclear trip: randomized within 30-50 range with variance
         if rng.random() < 0.4:
-            add_event(rng.randint(30, 50), "nuclear_trip")
+            nuclear_base = rng.randint(30, 50)
+            nuclear_variance = rng.randint(-3, 3)  # ±3 step variance
+            nuclear_step = max(1, min(total_steps - 2, nuclear_base + nuclear_variance))
+            add_event(nuclear_step, "nuclear_trip")
 
         # Coal price spike
         for _ in range(rng.randint(1, 2)):
@@ -1090,7 +1095,7 @@ def compute_reward(
     # ---- Oscillation penalty ----
     # Penalise repeatedly hitting max or min ramp — signals instability
     if state.coal_flip_streak >= 2:
-        reward -= 0.3 * state.coal_flip_streak
+        reward -= 0.5 * state.coal_flip_streak  # stronger penalty to discourage oscillations
 
     return reward
 
@@ -1233,9 +1238,11 @@ def simulator_step(
             if state.prev_coal_delta * effective_coal_delta < 0:
                 state.coal_flip_streak += 1
             else:
-                state.coal_flip_streak = max(0, state.coal_flip_streak - 1)
+                # Decay slowly when not oscillating (only decay every 3 stable steps)
+                state.coal_flip_streak = max(0, state.coal_flip_streak - (1 if state.coal_flip_streak % 3 == 0 else 0))
         else:
-            state.coal_flip_streak = max(0, state.coal_flip_streak - 1)
+            # Outside threshold - decay slowly (1 per 3 steps) to keep memory of oscillations
+            state.coal_flip_streak = max(0, state.coal_flip_streak - (1 if state.coal_flip_streak % 3 == 0 else 0))
 
     state.prev_coal_delta = effective_coal_delta
 
