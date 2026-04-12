@@ -157,39 +157,39 @@ class EnergyGridObservation(Observation):
     season: str                   # spring | summer | autumn | winter
 
     # Generation
-    coal_output_mw: float
+    coal_mw: float
     coal_online: bool
     coal_startup_steps_remaining: int
     coal_max_mw: float            # reduced after emergency boost
     coal_price: float             # current fuel cost multiplier
 
-    solar_output_mw: float
+    solar_mw: float
     solar_available: bool
     solar_weather: str            # clear | partial | cloudy | storm
 
-    wind_output_mw: float
+    wind_mw: float
     wind_available: bool
     wind_speed_ms: float          # useful for anticipating next-step output
 
-    hydro_output_mw: float
+    hydro_mw: float
     hydro_available: bool
     reservoir_level_mwh: float
     reservoir_capacity_mwh: float
     natural_inflow_mwh: float     # current river inflow rate
 
-    nuclear_output_mw: float
+    nuclear_mw: float
     nuclear_available: bool
     nuclear_online: bool
     nuclear_trip_steps_remaining: int
 
     # Storage
-    battery_level_mwh: float
+    battery_mwh: float
     battery_capacity_mwh: float   # degrades with cycles
 
     # Grid health
     unmet_demand_mw: float        # target: 0
     overproduction_mw: float
-    grid_frequency: float         # target: 50.0 Hz
+    frequency_hz: float         # target: 50.0 Hz
     rate_of_change_hz_per_step: float  # RoCoF — indicates instability
     system_inertia_seconds: float      # decreases with more renewables
     primary_response_active: bool      # governor compensating — act within 3 steps
@@ -201,13 +201,13 @@ class EnergyGridObservation(Observation):
 
     # Events & construction
     active_events: List[str]
-    plants_under_construction: List[Dict]  # [{type, steps_remaining, capacity_mw}]
+    plants_building: List[Dict]  # [{type, steps_remaining, capacity_mw}]
 
     # Economics
     capital_budget: float
     cumulative_cost: float
     cumulative_emissions_tons: float
-    step_reward: float
+    reward: float
 
     # Episode metadata
     done: bool
@@ -342,19 +342,19 @@ Full state returned by environment per step (50+ features):
 | **Time**       | demand_mw                 | float | 200-1100                         | MW    | Current demand       |
 |                | time_of_day               | int   | 0-23                             | h     | Hour of day          |
 |                | season                    | str   | {spring, summer, autumn, winter} | —     | Affects base demand  |
-| **Coal**       | coal_output_mw            | float | 0-600                            | MW    | Current output       |
+| **Coal**       | coal_mw                   | float | 0-600                            | MW    | Current output       |
 |                | coal_price                | float | 20-200                           | $/MWh | Fuel price (varies)  |
-| **Renewables** | solar_output_mw           | float | 0-300                            | MW    | Weather-driven       |
-|                | wind_output_mw            | float | 0-250                            | MW    | Stochastic           |
-| **Hydro**      | hydro_output_mw           | float | 0-200                            | MW    | Dispatched output    |
+| **Renewables** | solar_mw                  | float | 0-300                            | MW    | Weather-driven       |
+|                | wind_mw                   | float | 0-250                            | MW    | Stochastic           |
+| **Hydro**      | hydro_mw                  | float | 0-200                            | MW    | Dispatched output    |
 |                | reservoir_level_mwh       | float | 0-1000                           | MWh   | Stored water         |
-| **Nuclear**    | nuclear_output_mw         | float | 0-500                            | MW    | Baseload (slow ramp) |
-| **Battery**    | battery_level_mwh         | float | 0-200                            | MWh   | Stored energy        |
-| **Grid**       | grid_frequency            | float | 47.5-51.5                        | Hz    | System frequency     |
+| **Nuclear**    | nuclear_mw                | float | 0-500                            | MW    | Baseload (slow ramp) |
+| **Battery**    | battery_mwh               | float | 0-200                            | MWh   | Stored energy        |
+| **Grid**       | frequency_hz              | float | 47.5-51.5                        | Hz    | System frequency     |
 |                | unmet_demand_mw           | float | 0-300                            | MW    | Load shedding        |
 |                | blackout_risk             | str   | {none, low, med, high, critical} | —     | Risk level           |
 | **Investment** | capital_budget            | float | 0-2000                           | units | Budget (hard only)   |
-|                | plants_under_construction | list  | —                                | —     | Build queue          |
+|                | plants_building           | list  | —                                | —     | Build queue          |
 | **Economics**  | cumulative_cost           | float | 0-500                            | units | Total cost           |
 |                | cumulative_emissions_tons | float | 0-5000                           | tons  | CO₂ total            |
 
@@ -548,8 +548,8 @@ with EnergyGridEnv(base_url="http://localhost:8000") as env:
     obs = result.observation
 
     print(f"Demand: {obs.demand_mw} MW")
-    print(f"Coal: {obs.coal_output_mw} MW")
-    print(f"Frequency: {obs.grid_frequency} Hz")
+    print(f"Coal: {obs.coal_mw} MW")
+    print(f"Frequency: {obs.frequency_hz} Hz")
 
     # Run one day
     for step in range(24):

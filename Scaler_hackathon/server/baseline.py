@@ -165,7 +165,7 @@ def _build_planner_prompt(obs: "EnergyGridObservation") -> str:
     One‑shot strategic planning prompt for the Hard task.
     Runs once at step 0. Output is injected into every executor call.
     """
-    battery_pct = int(100 * obs.battery_level_mwh / max(1, obs.battery_capacity_mwh))
+    battery_pct = int(100 * obs.battery_mwh / max(1, obs.battery_capacity_mwh))
 
     return f"""You are a strategic planner for a 72‑step electricity grid simulation (Hard task, Winter).
 
@@ -179,8 +179,8 @@ KNOWN CONSTANTS (these are guaranteed facts, not estimates):
 - Total capital budget: 2000 units.
 
 INITIAL STATE:
-- Coal output: {obs.coal_output_mw:.0f} MW (online)
-- Battery: {battery_pct}% ({obs.battery_level_mwh:.0f}/{obs.battery_capacity_mwh:.0f} MWh)
+- Coal output: {obs.coal_mw:.0f} MW (online)
+- Battery: {battery_pct}% ({obs.battery_mwh:.0f}/{obs.battery_capacity_mwh:.0f} MWh)
 - Capital available: {obs.capital_budget:.0f} units
 
 IMPORTANT:
@@ -225,10 +225,10 @@ Be concise, decisive, and forward‑looking.
 def _build_user_prompt(obs: EnergyGridObservation, task_id: str) -> str:
     """Detailed state for model decision-making."""
     task = get_task(task_id)
-    total = (obs.coal_output_mw + obs.solar_output_mw + obs.wind_output_mw + 
-             obs.hydro_output_mw + obs.nuclear_output_mw)
+    total = (obs.coal_mw + obs.solar_mw + obs.wind_mw + 
+             obs.hydro_mw + obs.nuclear_mw)
     gap = obs.demand_mw - total
-    battery_pct = int(100*obs.battery_level_mwh/max(1,obs.battery_capacity_mwh))
+    battery_pct = int(100*obs.battery_mwh/max(1,obs.battery_capacity_mwh))
     
     prompt = (
         f"Step {obs.step}/{task['total_steps']} | "
@@ -236,22 +236,22 @@ def _build_user_prompt(obs: EnergyGridObservation, task_id: str) -> str:
         f"Generation: {total:.0f} MW | "
         f"Unmet Demand: {obs.unmet_demand_mw:.0f} MW | "
         f"Gap: {gap:+.0f} MW | "
-        f"Coal: {obs.coal_output_mw:.0f}/{obs.coal_max_mw:.0f} MW | "
-        f"Solar: {obs.solar_output_mw:.0f} MW | "
-        f"Wind: {obs.wind_output_mw:.0f} MW | "
-        f"Hydro: {obs.hydro_output_mw:.0f} MW | "
-        f"Nuclear: {obs.nuclear_output_mw:.0f} MW | "
-        f"Battery: {battery_pct}% ({obs.battery_level_mwh:.0f}/{obs.battery_capacity_mwh:.0f} MWh) | "
-        f"Frequency: {obs.grid_frequency:.2f} Hz | "
+        f"Coal: {obs.coal_mw:.0f}/{obs.coal_max_mw:.0f} MW | "
+        f"Solar: {obs.solar_mw:.0f} MW | "
+        f"Wind: {obs.wind_mw:.0f} MW | "
+        f"Hydro: {obs.hydro_mw:.0f} MW | "
+        f"Nuclear: {obs.nuclear_mw:.0f} MW | "
+        f"Battery: {battery_pct}% ({obs.battery_mwh:.0f}/{obs.battery_capacity_mwh:.0f} MWh) | "
+        f"Frequency: {obs.frequency_hz:.2f} Hz | "
         f"Risk: {obs.blackout_risk}"
     )
     
     # Hard task: include budget, events, and construction status
     if task_id == "hard":
-        if obs.plants_under_construction:
+        if obs.plants_building:
             construction_str = ", ".join(
                 f"{p['type']} ({p['steps_remaining']} steps left)"
-                for p in obs.plants_under_construction
+                for p in obs.plants_building
             )
             prompt += f" | Building: {construction_str}"
         prompt += (
@@ -411,7 +411,7 @@ def _apply_control_layer(
 
     # Block emergency boost spam — only if coal is damaged (not during outage)
     # Check: coal is not starting up AND max_mw is below recovery threshold (550 = 600 - boost_damage)
-    if action.emergency_coal_boost and obs.coal_startup_steps_remaining == 0 and obs.coal_max_mw < 550.0:
+    if action.emergency_coal_boost and obs.coal_startup_remaining == 0 and obs.coal_max_mw < 550.0:
         action.emergency_coal_boost = False
 
     return action
@@ -506,13 +506,13 @@ def run_task(
         # Execute step
         obs = env.step(action)
         step_count += 1
-        reward = obs.step_reward or 0.0
+        reward = obs.reward or 0.0
         rewards_list.append(reward)
         
         # Validate observation has sensible values (debug helper)
         if obs.demand_mw == 0 and step_count > 1:
             print(f"[DEBUG] Step {step_count}: demand_mw is zero (unusual)", flush=True)
-        if obs.coal_output_mw == 0 and obs.coal_online and step_count > 1:
+        if obs.coal_mw == 0 and obs.coal_online and step_count > 1:
             print(f"[DEBUG] Step {step_count}: coal offline but coal_online=True", flush=True)
 
         # Display detailed state after step
@@ -522,11 +522,11 @@ def run_task(
                 f"coal_delta={action.coal_delta:+.0f} "
                 f"battery={action.battery_mode} "
                 f"plant={action.plant_action} | "
-                f"Coal: {obs.coal_output_mw:.0f}/{obs.coal_max_mw:.0f} MW | "
+                f"Coal: {obs.coal_mw:.0f}/{obs.coal_max_mw:.0f} MW | "
                 f"Demand: {obs.demand_mw:.0f} MW | "
                 f"Unmet: {obs.unmet_demand_mw:.0f} MW | "
-                f"Battery: {int(100*obs.battery_level_mwh/max(1,obs.battery_capacity_mwh))}% | "
-                f"Freq: {obs.grid_frequency:.2f} Hz | "
+                f"Battery: {int(100*obs.battery_mwh/max(1,obs.battery_capacity_mwh))}% | "
+                f"Freq: {obs.frequency_hz:.2f} Hz | "
                 f"Reward: {reward:.2f}"
             )
 
@@ -542,7 +542,7 @@ def run_task(
         last_action_summary = (
             f"LastAction: coal_delta={action.coal_delta:+.0f} "
             f"battery={action.battery_mode} "
-            f"→ unmet={obs.unmet_demand_mw:.0f}MW freq={obs.grid_frequency:.3f}Hz"
+            f"→ unmet={obs.unmet_demand_mw:.0f}MW freq={obs.frequency_hz:.3f}Hz"
         )
 
         # Accumulate total reward (always, not just in verbose mode)
@@ -551,11 +551,11 @@ def run_task(
         if verbose:
             print(
                 f"           | Demand={obs.demand_mw:.0f}MW Unmet={obs.unmet_demand_mw:.0f}MW "
-                f"Coal={obs.coal_output_mw:.0f}/{obs.coal_max_mw:.0f}MW "
-                f"Solar={obs.solar_output_mw:.0f}MW Wind={obs.wind_output_mw:.0f}MW "
-                f"Hydro={obs.hydro_output_mw:.0f}MW Nuc={obs.nuclear_output_mw:.0f}MW "
-                f"Batt={int(100*obs.battery_level_mwh/max(1,obs.battery_capacity_mwh))}% "
-                f"Freq={obs.grid_frequency:.3f}Hz | Step Reward={reward:.2f} | Total Reward={total_reward:.2f} | Risk={obs.blackout_risk}"
+                f"Coal={obs.coal_mw:.0f}/{obs.coal_max_mw:.0f}MW "
+                f"Solar={obs.solar_mw:.0f}MW Wind={obs.wind_mw:.0f}MW "
+                f"Hydro={obs.hydro_mw:.0f}MW Nuc={obs.nuclear_mw:.0f}MW "
+                f"Batt={int(100*obs.battery_mwh/max(1,obs.battery_capacity_mwh))}% "
+                f"Freq={obs.frequency_hz:.3f}Hz | Step Reward={reward:.2f} | Total Reward={total_reward:.2f} | Risk={obs.blackout_risk}"
             )
 
         if obs.done:
@@ -623,7 +623,7 @@ def _call_llm_with_retry(
                 model=model,
                 max_tokens=max_tokens,
                 temperature=0.0,
-                stop=["}"] if stop_at_json else None,
+                stop=None,
                 messages=[{"role": "system", "content": system}, *messages],
             )
             # Extract the assistant's content

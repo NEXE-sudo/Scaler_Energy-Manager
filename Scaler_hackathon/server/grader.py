@@ -46,13 +46,13 @@ class StepLog:
     demand_mw: float
     total_supply_mw: float
     unmet_demand_mw: float
-    grid_frequency: float
-    coal_output_mw: float
-    solar_output_mw: float
-    wind_output_mw: float
-    hydro_output_mw: float
-    nuclear_output_mw: float
-    battery_level_mwh: float    
+    frequency_hz: float
+    coal_mw: float
+    solar_mw: float
+    wind_mw: float
+    hydro_mw: float
+    nuclear_mw: float
+    battery_mwh: float    
     battery_capacity_mwh: float
     reservoir_level_mwh: float
     reservoir_capacity_mwh: float
@@ -76,7 +76,7 @@ class EpisodeLog:
     steps_logged: List[StepLog] = field(default_factory=list)
 
     # Final state snapshots (populated at episode end)
-    final_battery_level_mwh: float = 0.0
+    final_battery_mwh: float = 0.0
     final_battery_capacity_mwh: float = 200.0
     final_reservoir_level_mwh: float = 0.0
     final_reservoir_capacity_mwh: float = 1000.0
@@ -105,7 +105,7 @@ class EpisodeLog:
         total_emissions: float,
         plants_built: List[str],
     ) -> None:
-        self.final_battery_level_mwh = battery_level
+        self.final_battery_mwh = battery_level
         self.final_battery_capacity_mwh = battery_capacity
         self.final_reservoir_level_mwh = reservoir_level
         self.final_reservoir_capacity_mwh = reservoir_capacity
@@ -160,7 +160,7 @@ def score_frequency(log: EpisodeLog) -> float:
         return 0.0
     stable_steps = sum(
         1 for s in log.steps_logged
-        if abs(s.grid_frequency - 50.0) <= 0.2
+        if abs(s.frequency_hz - 50.0) <= 0.2
     )
     return stable_steps / len(log.steps_logged)
 
@@ -174,7 +174,7 @@ def score_battery_health(log: EpisodeLog) -> float:
     """
     if log.final_battery_capacity_mwh <= 0:
         return 0.0
-    return max(0.0, min(1.0, log.final_battery_level_mwh / log.final_battery_capacity_mwh))
+    return max(0.0, min(1.0, log.final_battery_mwh / log.final_battery_capacity_mwh))
 
 
 def score_reservoir_management(log: EpisodeLog) -> float:
@@ -364,7 +364,7 @@ def grade_episode(log: EpisodeLog) -> GradeResult:
             "total_cumulative_emissions_tons": round(log.total_cumulative_emissions, 2),
             "plants_built": log.plants_built_during_episode,
             "final_battery_pct": round(
-                100 * log.final_battery_level_mwh / max(1, log.final_battery_capacity_mwh), 1
+                100 * log.final_battery_mwh / max(1, log.final_battery_capacity_mwh), 1
             ),
             "final_reservoir_pct": round(
                 100 * log.final_reservoir_level_mwh / max(1, log.final_reservoir_capacity_mwh), 1

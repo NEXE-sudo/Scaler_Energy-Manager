@@ -128,11 +128,11 @@ def normalize_observation(
         )
     
     for key in [
-        "coal_output_mw",
-        "solar_output_mw", 
-        "wind_output_mw",
-        "hydro_output_mw",
-        "nuclear_output_mw",
+        "coal_mw",
+        "solar_mw", 
+        "wind_mw",
+        "hydro_mw",
+        "nuclear_mw",
     ]:
         if key in normalized:
             normalized[key] = normalize_value(
@@ -150,9 +150,9 @@ def normalize_observation(
         )
     
     # ---- Frequency (Hz) ----
-    if "grid_frequency" in normalized:
-        normalized["grid_frequency"] = normalize_value(
-            normalized["grid_frequency"],
+    if "frequency_hz" in normalized:
+        normalized["frequency_hz"] = normalize_value(
+            normalized["frequency_hz"],
             bounds.MIN_FREQUENCY,
             bounds.MAX_FREQUENCY
         )
@@ -166,9 +166,9 @@ def normalize_observation(
         )
     
     # ---- Battery (MWh and %) ----
-    if "battery_level_mwh" in normalized:
-        normalized["battery_level_mwh"] = normalize_value(
-            normalized["battery_level_mwh"],
+    if "battery_mwh" in normalized:
+        normalized["battery_mwh"] = normalize_value(
+            normalized["battery_mwh"],
             bounds.MIN_BATTERY_MWH,
             bounds.MAX_BATTERY_MWH
         )
@@ -333,18 +333,18 @@ def denormalize_observation(
         norm_val = denormalized["demand_mw"]
         denormalized["demand_mw"] = bounds.MIN_DEMAND + norm_val * (bounds.MAX_DEMAND - bounds.MIN_DEMAND)
     
-    for key in ["coal_output_mw", "solar_output_mw", "wind_output_mw", "hydro_output_mw", "nuclear_output_mw"]:
+    for key in ["coal_mw", "solar_mw", "wind_mw", "hydro_mw", "nuclear_mw"]:
         if key in denormalized:
             norm_val = denormalized[key]
             denormalized[key] = bounds.MIN_GENERATION + norm_val * (bounds.MAX_GENERATION - bounds.MIN_GENERATION)
     
-    if "grid_frequency" in denormalized:
-        norm_val = denormalized["grid_frequency"]
-        denormalized["grid_frequency"] = bounds.MIN_FREQUENCY + norm_val * (bounds.MAX_FREQUENCY - bounds.MIN_FREQUENCY)
+    if "frequency_hz" in denormalized:
+        norm_val = denormalized["frequency_hz"]
+        denormalized["frequency_hz"] = bounds.MIN_FREQUENCY + norm_val * (bounds.MAX_FREQUENCY - bounds.MIN_FREQUENCY)
     
-    if "battery_level_mwh" in denormalized:
-        norm_val = denormalized["battery_level_mwh"]
-        denormalized["battery_level_mwh"] = bounds.MIN_BATTERY_MWH + norm_val * (bounds.MAX_BATTERY_MWH - bounds.MIN_BATTERY_MWH)
+    if "battery_mwh" in denormalized:
+        norm_val = denormalized["battery_mwh"]
+        denormalized["battery_mwh"] = bounds.MIN_BATTERY_MWH + norm_val * (bounds.MAX_BATTERY_MWH - bounds.MIN_BATTERY_MWH)
     
     if "cumulative_cost" in denormalized:
         norm_val = denormalized["cumulative_cost"]

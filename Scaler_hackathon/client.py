@@ -110,7 +110,7 @@ class EnergyGridEnv(
 
         # Construction queue — list of dicts
         construction: List[Dict[str, Any]] = obs_data.get(
-            "plants_under_construction", []
+            "plants_building", []
         )
 
         observation = EnergyGridObservation(
@@ -122,7 +122,7 @@ class EnergyGridEnv(
             season=obs_data.get("season", "spring"),
 
             # Coal
-            coal_output_mw=obs_data.get("coal_output_mw", 0.0),
+            coal_mw=obs_data.get("coal_mw", 0.0),
             coal_online=obs_data.get("coal_online", True),
             coal_startup_steps_remaining=obs_data.get(
                 "coal_startup_steps_remaining", 0
@@ -131,17 +131,17 @@ class EnergyGridEnv(
             coal_price=obs_data.get("coal_price", 1.0),
 
             # Solar
-            solar_output_mw=obs_data.get("solar_output_mw", 0.0),
+            solar_mw=obs_data.get("solar_mw", 0.0),
             solar_available=obs_data.get("solar_available", False),
             solar_weather=obs_data.get("solar_weather", "clear"),
 
             # Wind
-            wind_output_mw=obs_data.get("wind_output_mw", 0.0),
+            wind_mw=obs_data.get("wind_mw", 0.0),
             wind_available=obs_data.get("wind_available", False),
             wind_speed_ms=obs_data.get("wind_speed_ms", 0.0),
 
             # Hydro
-            hydro_output_mw=obs_data.get("hydro_output_mw", 0.0),
+            hydro_mw=obs_data.get("hydro_mw", 0.0),
             hydro_available=obs_data.get("hydro_available", False),
             reservoir_level_mwh=obs_data.get("reservoir_level_mwh", 600.0),
             reservoir_capacity_mwh=obs_data.get(
@@ -150,7 +150,7 @@ class EnergyGridEnv(
             natural_inflow_mwh=obs_data.get("natural_inflow_mwh", 15.0),
 
             # Nuclear
-            nuclear_output_mw=obs_data.get("nuclear_output_mw", 0.0),
+            nuclear_mw=obs_data.get("nuclear_mw", 0.0),
             nuclear_available=obs_data.get("nuclear_available", False),
             nuclear_online=obs_data.get("nuclear_online", False),
             nuclear_trip_steps_remaining=obs_data.get(
@@ -158,13 +158,13 @@ class EnergyGridEnv(
             ),
 
             # Battery
-            battery_level_mwh=obs_data.get("battery_level_mwh", 100.0),
+            battery_mwh=obs_data.get("battery_mwh", 100.0),
             battery_capacity_mwh=obs_data.get("battery_capacity_mwh", 200.0),
 
             # Grid health
             unmet_demand_mw=obs_data.get("unmet_demand_mw", 0.0),
             overproduction_mw=obs_data.get("overproduction_mw", 0.0),
-            grid_frequency=obs_data.get("grid_frequency", 50.0),
+            frequency_hz=obs_data.get("frequency_hz", 50.0),
             rate_of_change_hz_per_step=obs_data.get(
                 "rate_of_change_hz_per_step", 0.0
             ),
@@ -186,7 +186,7 @@ class EnergyGridEnv(
             active_events=obs_data.get("active_events", []),
 
             # Construction queue
-            plants_under_construction=construction,
+            plants_building=construction,
 
             # Economics
             capital_budget=obs_data.get("capital_budget", 0.0),
@@ -197,7 +197,7 @@ class EnergyGridEnv(
             feedin_credits_mwh=obs_data.get("feedin_credits_mwh", 0.0),
 
             # Episode metadata
-            step_reward=obs_data.get("step_reward", 0.0),
+            reward=obs_data.get("reward", 0.0),
             done=payload.get("done", False),
             reward=payload.get("reward"),
             episode_ended_early=obs_data.get("episode_ended_early", False),

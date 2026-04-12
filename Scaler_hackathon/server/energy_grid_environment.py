@@ -420,7 +420,7 @@ class EnergyGridEnvironment(Environment):
             blackout_risk=result.get("blackout_risk", "none"),
             spinning_reserve_mw=round(spinning_reserve, 2),
 
-            # Events & construction (renamed: plants_under_construction→plants_building)
+            # Events & construction (renamed: plants_building→plants_building)
             active_events=list(sim.active_events),
             plants_building=construction_list,
 
@@ -455,13 +455,13 @@ class EnergyGridEnvironment(Environment):
             demand_mw=sim.demand_mw,
             total_supply_mw=result.get("total_supply_mw", 0.0),
             unmet_demand_mw=result.get("unmet_demand_mw", 0.0),
-            grid_frequency=sim.frequency.frequency,
-            coal_output_mw=sim.coal.output_mw,
-            solar_output_mw=sim.solar.output_mw,
-            wind_output_mw=sim.wind.output_mw,
-            hydro_output_mw=sim.hydro.output_mw,
-            nuclear_output_mw=sim.nuclear.output_mw,
-            battery_level_mwh=sim.battery.level_mwh,
+            frequency_hz=sim.frequency.frequency,
+            coal_mw=sim.coal.output_mw,
+            solar_mw=sim.solar.output_mw,
+            wind_mw=sim.wind.output_mw,
+            hydro_mw=sim.hydro.output_mw,
+            nuclear_mw=sim.nuclear.output_mw,
+            battery_mwh=sim.battery.level_mwh,
             battery_capacity_mwh=sim.battery.capacity_mwh,
             reservoir_level_mwh=sim.hydro.reservoir_mwh,
             reservoir_capacity_mwh=HYDRO_RESERVOIR_CAP_MWH,
