@@ -8,7 +8,7 @@ frequency, hydro reservoir, plant construction queue, and economics.
 """
 
 from typing import Any, Dict, List, Optional, Literal
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, ConfigDict
 from openenv.core.env_server.types import Action, Observation
 
 
@@ -181,6 +181,8 @@ class EnergyGridObservation(Observation):
     Full grid state returned to the agent after each step / reset.
     OPTIMIZED: Removed redundant fields for 30% token reduction.
     """
+
+    model_config = ConfigDict(extra='ignore')
 
     # ------------------------------------------------------------------
     # Demand & time (Essential)

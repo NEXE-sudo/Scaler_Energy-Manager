@@ -149,7 +149,7 @@ def score_cost_efficiency(log: EpisodeLog, task_id: str) -> float:
     """
     max_cost = TASKS[task_id]["max_expected_cost"]
     normalised = log.total_cumulative_cost / max(0.01, max_cost)
-    return min(1.0, 1.0 - normalised)  # Removed floor: exploit fix prevents massive overspending
+    return max(0.0, min(1.0, 1.0 - normalised))
 
 
 def score_frequency(log: EpisodeLog) -> float:
