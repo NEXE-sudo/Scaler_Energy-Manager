@@ -135,7 +135,7 @@ def score_reliability(log: EpisodeLog) -> float:
         survival_fraction = steps_before_blackout / max(1, log.total_steps)
         return 0.5 * survival_fraction  # max 0.5 for blackout
 
-    good_steps = sum(1 for s in log.steps_logged if s.unmet_demand_mw < 1.0)
+    good_steps = sum(1 for s in log.steps_logged if s.unmet_demand_mw < 0.1)
     return good_steps / max(1, log.total_steps)
 
 

@@ -1018,6 +1018,7 @@ def compute_reward(
     # ---- Reliability ----
     reward -= 0.25 * unmet          # prioritise reliability
     reward -= 0.001 * over          # reduce oversupply penalty
+    reward -= 0.30 * load_shed_mw   # penalty for load shedding (prevent exploit)
 
     # ---- Frequency stability ----
     reward -= 0.2 * freq_error      # reduce frequency dominance
@@ -1025,7 +1026,7 @@ def compute_reward(
         reward += 0.2   # bonus for very stable frequency
 
     if demand_response_mw > 0 and task_id != "hard":
-        reward -= 0.05 * demand_response_mw  # soft penalty
+        reward -= 0.20 * demand_response_mw  # strong penalty to prevent DR spam
 
     # Penalty applies only when crossing the 500 MW threshold (not every step after)
     # Check: did we just cross 500 MW this step?
@@ -1059,9 +1060,9 @@ def compute_reward(
     solar_output = state.solar.output_mw if state.solar.available else 0.0
     hydro_output = state.hydro.output_mw if state.hydro.available else 0.0
     
-    reward += 0.015 * wind_output    # 1.5¢/MW wind bonus
-    reward += 0.020 * solar_output   # 2¢/MW solar bonus (higher value due to scarcity)
-    reward += 0.010 * hydro_output   # 1¢/MW hydro bonus
+    renewable_bonus = 0.015 * wind_output + 0.020 * solar_output + 0.010 * hydro_output
+    renewable_bonus = min(0.30, renewable_bonus)  # Cap bonus to prevent stacking exploit
+    reward += renewable_bonus
     
     # ---- Prosumer feed-in credit ----
     if feedin_mw > 0:
