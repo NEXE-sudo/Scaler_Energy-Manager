@@ -45,7 +45,7 @@ class EnergyGridAction(Action):
     
     Plant Investment (categorical, hard task only):
     - Discrete build actions (build_solar, build_wind, build_hydro, build_nuclear)
-    - Agents must plan ahead ~10–15 steps (plant build times)
+    - Agents must plan ahead ~10-15 steps (plant build times)
     - Forces multi-horizon reasoning beyond myopic dispatch
     
     Emergency Tools:
@@ -78,7 +78,7 @@ class EnergyGridAction(Action):
         description=(
             "Change in hydro turbine output this step (MW). "
             "Range: -80 to +80 MW. "
-            "Clamped to 0–200 MW. Depletes reservoir when positive. "
+            "Clamped to 0-200 MW. Depletes reservoir when positive. "
             "Only available if hydro plant is built."
         ),
     )
@@ -143,7 +143,7 @@ class EnergyGridAction(Action):
         le=150.0,
         description=(
             "Request industrial demand reduction this step (MW). "
-            "Range: 0–150 MW. Reduces effective demand immediately but "
+            "Range: 0-150 MW. Reduces effective demand immediately but "
             "costs capital (0.5 units per MW). Available in all tasks."
         ),
     )
@@ -186,7 +186,7 @@ class EnergyGridObservation(Observation):
     # Demand & time (Essential)
     # ------------------------------------------------------------------
     demand_mw: float = Field(default=0.0, description="Current grid demand (MW).")
-    hour: int = Field(default=0, ge=0, le=23, description="Hour (0–23).")
+    hour: int = Field(default=0, ge=0, le=23, description="Hour (0-23).")
     day: int = Field(default=1, ge=1, description="Day (1-indexed).")
     step: int = Field(default=0, ge=0, description="Total steps elapsed.")
     season: str = Field(default="spring", description="Season: spring|summer|autumn|winter.")

@@ -55,7 +55,7 @@ grids transition to higher renewable penetration.
 
 | Source  | Max MW | Ramp/step | Fuel cost | Inertia | Notes                                         |
 | ------- | ------ | --------- | --------- | ------- | --------------------------------------------- |
-| Coal    | 600    | ±100 MW   | 1.0–2.5×  | High    | Min stable 200 MW, 3-step restart             |
+| Coal    | 600    | ±100 MW   | 1.0-2.5×  | High    | Min stable 200 MW, 3-step restart             |
 | Solar   | 300    | N/A       | Free      | None    | Sine curve, daytime only, weather-dependent   |
 | Wind    | 250    | N/A       | Free      | None    | Autocorrelated stochastic, cubic power curve  |
 | Hydro   | 200    | ±80 MW    | Free      | High    | Reservoir-limited, rainfall/drought sensitive |
@@ -93,7 +93,7 @@ the central challenge of modern grid decarbonisation.
 The hydro plant uses a realistic reservoir model:
 
 - Natural river inflow: ~15 MWh/step (stochastic)
-- Rainfall event: +80–150 MWh instant refill
+- Rainfall event: +80-150 MWh instant refill
 - Drought event: inflow drops to ~2 MWh/step for 8 steps
 - Spillage if reservoir > 950 MWh (waste penalty)
 - Reservoir depletes 1 MWh per 1 MWh generated
@@ -107,12 +107,12 @@ The hydro plant uses a realistic reservoir model:
 | `cloud`        | Solar ×0.6                           | Medium, Hard |
 | `heavy_cloud`  | Solar ×0.3                           | Medium, Hard |
 | `storm`        | Solar ×0.0, panel micro-damage       | Hard         |
-| `calm`         | Wind near zero for 4–6 steps         | Medium, Hard |
-| `rainfall`     | Hydro reservoir +80–150 MWh          | Medium, Hard |
+| `calm`         | Wind near zero for 4-6 steps         | Medium, Hard |
+| `rainfall`     | Hydro reservoir +80-150 MWh          | Medium, Hard |
 | `drought`      | Hydro inflow →2 MWh/step × 8 steps   | Hard         |
 | `coal_outage`  | Coal max →300 MW × 3 steps           | Hard         |
 | `nuclear_trip` | Nuclear SCRAM, 8-step restart        | Hard         |
-| `price_spike`  | Coal cost ×2.0–2.5 × 5 steps         | Hard         |
+| `price_spike`  | Coal cost ×2.0-2.5 × 5 steps         | Hard         |
 | `grid_fault`   | Transmission capacity −20% × 3 steps | Hard         |
 
 All events are pre-scheduled at episode start using a fixed seed —
@@ -131,7 +131,7 @@ class EnergyGridAction(Action):
     plant_action: str         # "none" | "build_solar" | "build_wind" |
                               # "build_hydro" | "build_nuclear" | "close_coal"
     emergency_coal_boost: bool  # +200 MW instant, damages plant 5 steps
-    demand_response_mw: float   # 0–150 MW voluntary load reduction
+    demand_response_mw: float   # 0-150 MW voluntary load reduction
 ```
 
 **Notes:**
@@ -151,7 +151,7 @@ class EnergyGridAction(Action):
 class EnergyGridObservation(Observation):
     # Demand & time
     demand_mw: float              # current grid demand
-    time_of_day: int              # 0–23 hours
+    time_of_day: int              # 0-23 hours
     day: int                      # episode day (1-indexed)
     step: int                     # total steps elapsed
     season: str                   # spring | summer | autumn | winter
@@ -225,8 +225,8 @@ Each task models genuine grid challenges from real-world operations:
 
 | Task       | Real Scenario                                                         | Grid Operator Challenge                                           | Domain Difficulty      |
 | ---------- | --------------------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------- |
-| **Easy**   | Single coal plant (rural grid, 1–2 plants)                            | Learn daily demand curve, manage ramp constraints                 | Coal physics           |
-| **Medium** | High renewable grid (Germany/Denmark, 40–60% wind+solar)              | Forecast variability, manage sudden losses, balance rapidly       | Weather foresight      |
+| **Easy**   | Single coal plant (rural grid, 1-2 plants)                            | Learn daily demand curve, manage ramp constraints                 | Coal physics           |
+| **Medium** | High renewable grid (Germany/Denmark, 40-60% wind+solar)              | Forecast variability, manage sudden losses, balance rapidly       | Weather foresight      |
 | **Hard**   | Multi-source strategic planning (ERCOT, UK winter, Australia drought) | Capital decisions, cascading failures, multi-objective trade-offs | Long-horizon reasoning |
 
 ---
@@ -237,7 +237,7 @@ Each task models genuine grid challenges from real-world operations:
 
 Operate a single coal plant and battery over one day.
 No renewable sources. No stochastic events.
-The agent must learn the daily demand curve (400–880 MW) and dispatch
+The agent must learn the daily demand curve (400-880 MW) and dispatch
 coal + battery to meet demand at minimum cost.
 
 **Grader weights:**
@@ -245,7 +245,7 @@ coal + battery to meet demand at minimum cost.
 - Reliability (% steps demand met): 60%
 - Cost efficiency: 40%
 
-**Expected LLM score:** 0.70–0.85
+**Expected LLM score:** 0.70-0.85
 
 ---
 
@@ -265,7 +265,7 @@ coping with stochastic weather over 48 steps.
 - Battery health (final SoC): 15%
 - Reservoir management: 10% _(battery proxy — tracks careful storage management)_
 
-**Expected LLM score:** 0.50–0.70
+**Expected LLM score:** 0.50-0.70
 
 ---
 
@@ -291,7 +291,7 @@ for 57 steps. Building it at step 40 means only 17 steps of benefit.
 - Battery health: 10%
 - Capital efficiency: 10%
 
-**Expected LLM score:** 0.30–0.50
+**Expected LLM score:** 0.30-0.50
 
 ---
 
@@ -339,24 +339,24 @@ Full state returned by environment per step (50+ features):
 
 | Category       | Feature                   | Type  | Range                            | Unit  | Description          |
 | -------------- | ------------------------- | ----- | -------------------------------- | ----- | -------------------- |
-| **Time**       | demand_mw                 | float | 200–1100                         | MW    | Current demand       |
-|                | time_of_day               | int   | 0–23                             | h     | Hour of day          |
+| **Time**       | demand_mw                 | float | 200-1100                         | MW    | Current demand       |
+|                | time_of_day               | int   | 0-23                             | h     | Hour of day          |
 |                | season                    | str   | {spring, summer, autumn, winter} | —     | Affects base demand  |
-| **Coal**       | coal_output_mw            | float | 0–600                            | MW    | Current output       |
-|                | coal_price                | float | 20–200                           | $/MWh | Fuel price (varies)  |
-| **Renewables** | solar_output_mw           | float | 0–300                            | MW    | Weather-driven       |
-|                | wind_output_mw            | float | 0–250                            | MW    | Stochastic           |
-| **Hydro**      | hydro_output_mw           | float | 0–200                            | MW    | Dispatched output    |
-|                | reservoir_level_mwh       | float | 0–1000                           | MWh   | Stored water         |
-| **Nuclear**    | nuclear_output_mw         | float | 0–500                            | MW    | Baseload (slow ramp) |
-| **Battery**    | battery_level_mwh         | float | 0–200                            | MWh   | Stored energy        |
-| **Grid**       | grid_frequency            | float | 47.5–51.5                        | Hz    | System frequency     |
-|                | unmet_demand_mw           | float | 0–300                            | MW    | Load shedding        |
+| **Coal**       | coal_output_mw            | float | 0-600                            | MW    | Current output       |
+|                | coal_price                | float | 20-200                           | $/MWh | Fuel price (varies)  |
+| **Renewables** | solar_output_mw           | float | 0-300                            | MW    | Weather-driven       |
+|                | wind_output_mw            | float | 0-250                            | MW    | Stochastic           |
+| **Hydro**      | hydro_output_mw           | float | 0-200                            | MW    | Dispatched output    |
+|                | reservoir_level_mwh       | float | 0-1000                           | MWh   | Stored water         |
+| **Nuclear**    | nuclear_output_mw         | float | 0-500                            | MW    | Baseload (slow ramp) |
+| **Battery**    | battery_level_mwh         | float | 0-200                            | MWh   | Stored energy        |
+| **Grid**       | grid_frequency            | float | 47.5-51.5                        | Hz    | System frequency     |
+|                | unmet_demand_mw           | float | 0-300                            | MW    | Load shedding        |
 |                | blackout_risk             | str   | {none, low, med, high, critical} | —     | Risk level           |
-| **Investment** | capital_budget            | float | 0–2000                           | units | Budget (hard only)   |
+| **Investment** | capital_budget            | float | 0-2000                           | units | Budget (hard only)   |
 |                | plants_under_construction | list  | —                                | —     | Build queue          |
-| **Economics**  | cumulative_cost           | float | 0–500                            | units | Total cost           |
-|                | cumulative_emissions_tons | float | 0–5000                           | tons  | CO₂ total            |
+| **Economics**  | cumulative_cost           | float | 0-500                            | units | Total cost           |
+|                | cumulative_emissions_tons | float | 0-5000                           | tons  | CO₂ total            |
 
 **Design**: Raw physical units provided; agents can normalize using `server.normalization.normalize_observation()` for improved generalization.
 
@@ -575,7 +575,7 @@ The baseline LLM agent uses a hybrid chain-of-thought approach: one sentence of 
 ### Quick Start
 
 ```bash
-# Run all three tasks (may take 10–15 minutes with API latency)
+# Run all three tasks (may take 10-15 minutes with API latency)
 python server/baseline.py
 
 # Run only the easy task
@@ -650,7 +650,7 @@ SUMMARY
 
 - **Easy task**: Completed all 24 steps without blackout, but low score (0.18) due to high emissions and cost inefficiency
 - **Medium task**: Failed early with blackout at step 7 — insufficient renewable capacity despite building solar + wind
-- **Hard task**: Failed at step 26, likely during coal outage period (steps 23–25) when battery depleted
+- **Hard task**: Failed at step 26, likely during coal outage period (steps 23-25) when battery depleted
 - The agent built plants but too slowly — needs earlier construction decisions
 - Multi-hour planning horizon insufficient for this 24/48/72-step horizon
 
@@ -764,7 +764,7 @@ These examples show the reasoning patterns that perform best on each task. Use t
 
 **Expected Reasoning:**
 
-> "Sudden cloud covered solar (lost 120 MW generation). Frequency dropping and I'm 50 MW short. Cloud events last 3–5 steps typically. I should increase coal (+100 to max), discharge full battery power to stabilize frequency immediately, and prepare mentally that if wind drops too I'll cause a blackout. This is critical."
+> "Sudden cloud covered solar (lost 120 MW generation). Frequency dropping and I'm 50 MW short. Cloud events last 3-5 steps typically. I should increase coal (+100 to max), discharge full battery power to stabilize frequency immediately, and prepare mentally that if wind drops too I'll cause a blackout. This is critical."
 
 **Action:**
 
@@ -806,7 +806,7 @@ These examples show the reasoning patterns that perform best on each task. Use t
 }
 ```
 
-**Then steps 1–5:** Maintain current dispatch without incident.
+**Then steps 1-5:** Maintain current dispatch without incident.
 
 **Step 6:** Build solar while nuclear is still under construction.
 
@@ -877,7 +877,7 @@ This table shows realistic score expectations by agent architecture:
 1. **Stateless LLM (0.25 avg)** — No planning, reactive only. Exhausts coal quickly.
 2. **Stateful LLM + memory (0.48 avg)** — Remembers recent context; better decisions but inconsistent long-horizon planning.
 3. **LLM + explicit planner (0.62 avg)** — Reasoning before every action + full episode plan computed at step 0. Significant boost.
-4. **RL agents (0.65–0.78 avg)** — Excel on easy/medium, struggle on discrete choices (hard). Most improvements from 0.25→0.65 come from better action sequencing, not learning.
+4. **RL agents (0.65-0.78 avg)** — Excel on easy/medium, struggle on discrete choices (hard). Most improvements from 0.25→0.65 come from better action sequencing, not learning.
 
 **To improve from 0.25 to 0.60+:**
 
@@ -972,7 +972,7 @@ This environment is grounded in operational challenges faced by **real grid oper
 | **Texas Freeze (ERCOT)**   | 2021         | 210+ deaths, $130B economic loss      | Hard          | Coal/nuclear freeze-offs + wind shutdown, unable to build capacity fast enough |
 | **UK Storm Arwen**         | 2021         | 1.3M without power, £billions cost    | Medium        | Renewable variability (wind spike then drop), distribution failures            |
 | **Australia Black System** | 2016         | 1.7M without power, $1B+ impact       | Hard          | Sudden loss of 1000 MW + low inertia (renewables) → frequency collapse         |
-| **German Duck Curve**      | 2010–present | Grid instability during solar ramp    | Medium        | Daily solar ramping from 0→peak→0 MW, storage inadequate                       |
+| **German Duck Curve**      | 2010-present | Grid instability during solar ramp    | Medium        | Daily solar ramping from 0→peak→0 MW, storage inadequate                       |
 | **New Zealand Drought**    | 2008         | Hydro SoC < 1%, tight demand response | Hard + Medium | Reservoir depletion, extended low inflow forecast, strategic build decisions   |
 | **PJM 2003 Cascade**       | 2003         | 55M without power (Northeast)         | Hard          | Transmission fault → reactive cascade → frequency collapse                     |
 
@@ -1022,7 +1022,7 @@ With renewables + weather variability:
 → Penalizes: agents that drain battery to zero
 ```
 
-**Real analogy:** Nordic/German TSO managing 40–60% renewables. Must preserve battery state-of-charge for next weather event.
+**Real analogy:** Nordic/German TSO managing 40-60% renewables. Must preserve battery state-of-charge for next weather event.
 
 ### Hard Task: 40% Reliability / 20% Cost / 10% Emissions / 10% Reservoir / 10% Battery / 10% Capital
 
@@ -1053,12 +1053,12 @@ Expected performance by agent type on Energy Grid OpenEnv:
 
 | Agent Type                   | Easy      | Medium    | Hard      | Why                                                           | Deployment Readiness     |
 | ---------------------------- | --------- | --------- | --------- | ------------------------------------------------------------- | ------------------------ |
-| **Human Grid Operator**      | 0.85–0.95 | 0.70–0.85 | 0.60–0.75 | Domain expertise, 10+ years training, intuition               | Production ready         |
+| **Human Grid Operator**      | 0.85-0.95 | 0.70-0.85 | 0.60-0.75 | Domain expertise, 10+ years training, intuition               | Production ready         |
 | **Stateless LLM (baseline)** | 0.18      | 0.23      | 0.33      | Reactive, no planning, exhausts capacity                      | Proof-of-concept only    |
-| **LLM + Memory**             | 0.50–0.60 | 0.55–0.65 | 0.40–0.50 | Maintains decisions but still myopic                          | Research-only            |
-| **LLM + Planner**            | 0.65–0.75 | 0.60–0.70 | 0.55–0.65 | Explicit strategy at step 0, real-time adjustments            | Promising                |
-| **RL (PPO/SAC)**             | 0.72–0.80 | 0.68–0.75 | 0.45–0.55 | Excellent on predictable tasks; struggles on discrete choices | Good on easy/medium      |
-| **Hybrid (RL+LLM)**          | 0.78–0.88 | 0.74–0.82 | 0.65–0.75 | RL learns dispatch, LLM makes strategic builds                | **Closest to operators** |
+| **LLM + Memory**             | 0.50-0.60 | 0.55-0.65 | 0.40-0.50 | Maintains decisions but still myopic                          | Research-only            |
+| **LLM + Planner**            | 0.65-0.75 | 0.60-0.70 | 0.55-0.65 | Explicit strategy at step 0, real-time adjustments            | Promising                |
+| **RL (PPO/SAC)**             | 0.72-0.80 | 0.68-0.75 | 0.45-0.55 | Excellent on predictable tasks; struggles on discrete choices | Good on easy/medium      |
+| **Hybrid (RL+LLM)**          | 0.78-0.88 | 0.74-0.82 | 0.65-0.75 | RL learns dispatch, LLM makes strategic builds                | **Closest to operators** |
 
 **Gap Analysis:**
 

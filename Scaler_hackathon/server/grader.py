@@ -185,7 +185,7 @@ def score_reservoir_management(log: EpisodeLog) -> float:
         - Draining the reservoir below 10% (desperate usage)
         - Allowing reservoir above 95% for multiple steps (spillage waste)
 
-    Rewards keeping reservoir in the 20–80% operating band.
+    Rewards keeping reservoir in the 20-80% operating band.
     """
     if not log.steps_logged:
         return 0.5  # neutral if no hydro data
@@ -273,7 +273,7 @@ def score_capital_efficiency(log: EpisodeLog) -> float:
 class GradeResult:
     """Full grading result with component breakdown."""
     task_id: str
-    total_score: float                          # final 0.0–1.0 score
+    total_score: float                          # final 0.0-1.0 score
     component_scores: Dict[str, float]          # individual components
     component_weights: Dict[str, float]         # weights used
     weighted_components: Dict[str, float]       # weight × score per component

@@ -83,7 +83,7 @@ class EnergyGridEnvironment(Environment):
     """
     OpenEnv-compliant Energy Grid Management Environment.
 
-    Simulates operating a national electricity grid over 1–3 simulated
+    Simulates operating a national electricity grid over 1-3 simulated
     days. The agent dispatches generation sources, manages battery
     storage, responds to stochastic weather and fault events, and in the
     Hard task makes long-term plant investment decisions.

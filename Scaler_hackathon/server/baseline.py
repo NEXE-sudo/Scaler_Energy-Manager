@@ -90,9 +90,9 @@ def _build_client() -> tuple[OpenAI, str]:
     Build an OpenAI‑compatible client.
 
     Required env vars:
-        API_BASE_URL   – endpoint (e.g. https://api.groq.com/openai/v1)
-        MODEL_NAME      – model identifier
-        OPENAI_API_KEY / HF_TOKEN – auth token (checked in that priority order)
+        API_BASE_URL   - endpoint (e.g. https://api.groq.com/openai/v1)
+        MODEL_NAME      - model identifier
+        OPENAI_API_KEY / HF_TOKEN - auth token (checked in that priority order)
     """
     api_base_url = os.getenv("API_BASE_URL")
     model_name   = os.getenv("MODEL_NAME")
@@ -134,17 +134,17 @@ def _build_system_prompt(task_id: str = "easy", plan: str = "", step: int = 0) -
     For Hard task, injects the planner output only up to step 20 to save tokens.
     """
     # -------------------------------------------------------------------
-    # Compact prompt – no REASON requirement (saves ~30% tokens)
+    # Compact prompt - no REASON requirement (saves ~30% tokens)
     # -------------------------------------------------------------------
     base = """You are an expert electricity grid operator. Output ONLY valid JSON ACTION:
 {"coal_delta":<-100..100>,"hydro_delta":<-80..80>,"nuclear_delta":<-10..10>,"battery_mode":"charge|discharge|idle","plant_action":"none|build_solar|build_wind|build_hydro|build_nuclear|close_coal","emergency_coal_boost":true|false,"demand_response_mw":<0..150>}
 
 Constraints:
-- Coal: min 200 MW, max 600 MW, ramp ±100 MW/step.
-- Nuclear: min 300 MW, ramp ±10 MW/step, SCRAM → 0 for 8 steps.
-- Battery: charge/discharge ≤ 50 MW, cannot do both.
-- Frequency: keep 49.5 – 50.5 Hz, blackout < 47.5 Hz or > 51.5 Hz.
-- Gap = demand – total_generation (positive = shortfall).
+- Coal: min 200 MW, max 600 MW, ramp ±100 MW/step.
+- Nuclear: min 300 MW, ramp ±10 MW/step, SCRAM → 0 for 8 steps.
+- Battery: charge/discharge ≤ 50 MW, cannot do both.
+- Frequency: keep 49.5 - 50.5 Hz, blackout < 47.5 Hz or > 51.5 Hz.
+- Gap = demand - total_generation (positive = shortfall).
 
 If gap > 0 → use battery discharge first, then increase coal, then emergency boost (last resort only).
 If gap < 0 (oversupply > 20 MW) → reduce coal immediately, or charge battery.
@@ -163,7 +163,7 @@ Operational strategy:
 def _build_planner_prompt(obs: "EnergyGridObservation") -> str:
     """
     One‑shot strategic planning prompt for the Hard task.
-    Runs once at step 0. Output is injected into every executor call.
+    Runs once at step 0. Output is injected into every executor call.
     """
     battery_pct = int(100 * obs.battery_level_mwh / max(1, obs.battery_capacity_mwh))
 
@@ -171,7 +171,7 @@ def _build_planner_prompt(obs: "EnergyGridObservation") -> str:
 
 KNOWN CONSTANTS (these are guaranteed facts, not estimates):
 - Winter peak demand ~1100 MW. Coal max = 600 MW → structural deficit ~500 MW → new capacity is REQUIRED.
-- Coal outage GUARANTEED at steps 23–25 (day 2). Coal max drops to 300 MW for 3 steps.
+- Coal outage GUARANTEED at steps 23-25 (day 2). Coal max drops to 300 MW for 3 steps.
 - Nuclear: costs 1000, build time 15 steps, output 500 MW baseload (min 300 MW once online).
 - Wind:    costs 400, build time 6 steps, output 250 MW (available day & night).
 - Solar:   costs 500, build time 8 steps, output 300 MW (zero at night).
@@ -212,14 +212,14 @@ PLAN:
 - Build Order: <what to build and at which steps>
 - Coal Strategy: <how coal is ramped and used over time>
 - Battery Strategy: <when to conserve vs discharge>
-- Outage Plan: <how to survive steps 23–25>
+- Outage Plan: <how to survive steps 23-25>
 - Emissions Strategy: <how and when to reduce coal dependency>
 
 Be concise, decisive, and forward‑looking.
 """
 
 # ---------------------------------------------------------------------------
-# User prompt (state summary) – unchanged apart from minor formatting
+# User prompt (state summary) - unchanged apart from minor formatting
 # ---------------------------------------------------------------------------
 
 def _build_user_prompt(obs: EnergyGridObservation, task_id: str) -> str:
@@ -278,7 +278,7 @@ def _parse_action(response_text: str) -> EnergyGridAction:
     """
     # Handle empty or pure whitespace responses
     if not response_text or not response_text.strip():
-        print("[WARN] Parser failed – empty response from model")
+        print("[WARN] Parser failed - empty response from model")
         return EnergyGridAction()  # safe default (no‑op)
     
     # 1️⃣ strip markdown fences and surrounding whitespace
@@ -287,7 +287,7 @@ def _parse_action(response_text: str) -> EnergyGridAction:
 
     # If it's now empty, return default
     if not txt:
-        print("[WARN] Parser failed – empty after stripping markdown")
+        print("[WARN] Parser failed - empty after stripping markdown")
         return EnergyGridAction()
 
     # 2️⃣ balanced‑brace extraction (find the first complete JSON object)
@@ -311,7 +311,7 @@ def _parse_action(response_text: str) -> EnergyGridAction:
     raw = extract_json(search_text) or extract_json(txt)
 
     if raw is None:
-        print("[WARN] Parser failed – no JSON object found")
+        print("[WARN] Parser failed - no JSON object found")
         print(f"[WARN] Response length: {len(txt)} chars")
         print("[WARN] Raw response:")
         print(repr(txt))
@@ -452,7 +452,7 @@ def run_task(
     EPISODE_TIMEOUT = 18 * 60
 
     # ------------------------------------------------------------------
-    # Hard task – one‑shot planner
+    # Hard task - one‑shot planner
     # ------------------------------------------------------------------
     plan = ""
     if task_id == "hard":
@@ -637,14 +637,14 @@ def _call_llm_with_retry(
                 if reasoning.strip():
                     content = reasoning
                     if verbose:
-                        print(f"  [DEBUG] Using reasoning field ({len(reasoning)} chars) – finish_reason='{response.choices[0].finish_reason}'")
+                        print(f"  [DEBUG] Using reasoning field ({len(reasoning)} chars) - finish_reason='{response.choices[0].finish_reason}'")
             
             # ✅ PRINT TOKENS FIRST (before any validation checks)
             # This ensures we see token usage even if content is empty/invalid
             if verbose and hasattr(response, "usage"):
                 usage = response.usage
                 print(
-                    f"  [DEBUG] Tokens – prompt:{usage.prompt_tokens} "
+                    f"  [DEBUG] Tokens - prompt:{usage.prompt_tokens} "
                     f"completion:{usage.completion_tokens} total:{usage.total_tokens}"
                 )
             
@@ -667,7 +667,7 @@ def _call_llm_with_retry(
             if verbose and 'response' in locals() and hasattr(response, "usage"):
                 usage = response.usage
                 print(
-                    f"  [DEBUG] Error path – Tokens – prompt:{usage.prompt_tokens} "
+                    f"  [DEBUG] Error path - Tokens - prompt:{usage.prompt_tokens} "
                     f"completion:{usage.completion_tokens} total:{usage.total_tokens}"
                 )
             

@@ -39,7 +39,7 @@ TASKS: Dict[str, Dict[str, Any]] = {
             "The agent must learn the daily demand curve and dispatch "
             "coal output + battery charge/discharge to meet demand at "
             "minimum cost while maintaining grid frequency. "
-            "A well-calibrated agent should score 0.70–0.85."
+            "A well-calibrated agent should score 0.70-0.85."
         ),
         "difficulty": "easy",
         "total_steps": 24,
@@ -94,7 +94,7 @@ TASKS: Dict[str, Dict[str, Any]] = {
             "Rainfall events replenish the (not yet built) hydro reservoir. "
             "The agent must balance cost optimisation against reliability "
             "while coping with stochastic weather. "
-            "A well-calibrated agent should score 0.50–0.70."
+            "A well-calibrated agent should score 0.50-0.70."
         ),
         "difficulty": "medium",
         "total_steps": 48,
@@ -147,7 +147,7 @@ TASKS: Dict[str, Dict[str, Any]] = {
             "The agent must balance four competing objectives: reliability, "
             "cost, emissions, and long-term grid stability. "
             "Demand response is available at capital cost. "
-            "A frontier LLM should score 0.30–0.50."
+            "A frontier LLM should score 0.30-0.50."
         ),
         "difficulty": "hard",
         "total_steps": 72,
@@ -251,7 +251,7 @@ PLANT_BUILD_NOTES: Dict[str, Dict[str, str]] = {
         "inertia_contribution": "none (inverter-based)",
         "notes": (
             "24/7 availability but stochastic. Output follows cubic wind "
-            "power curve. Calm periods can persist 4–6 steps."
+            "power curve. Calm periods can persist 4-6 steps."
         ),
     },
     "hydro": {

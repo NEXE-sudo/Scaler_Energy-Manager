@@ -161,7 +161,7 @@ async def get_tasks() -> JSONResponse:
                     "true/false — overrides ramp limits, damages plant for 5 steps"
                 ),
                 "demand_response_mw": (
-                    "0–150 MW — reduces effective demand, costs 0.5 capital/MW "
+                    "0-150 MW — reduces effective demand, costs 0.5 capital/MW "
                     "(Hard task only deducts capital)"
                 ),
             },
@@ -177,7 +177,7 @@ async def get_tasks() -> JSONResponse:
     "/grader",
     summary="Grade completed episode",
     description=(
-        "Returns the deterministic grader score (0.0–1.0) for the most "
+        "Returns the deterministic grader score (0.0-1.0) for the most "
         "recently completed episode on this server instance. "
         "Also returns per-component score breakdown. "
         "If the episode is still running, returns a partial grade."
@@ -226,7 +226,7 @@ async def grade_episode(request: GraderRequest = GraderRequest()) -> JSONRespons
         "(or a subset specified in the request body). "
         "Requires API_BASE_URL, MODEL_NAME, and HF_TOKEN environment variables. "
         "Returns reproducible scores for each task. "
-        "This endpoint blocks until all tasks complete — expect 2–5 minutes."
+        "This endpoint blocks until all tasks complete — expect 2-5 minutes."
     ),
     tags=["OpenEnv Extensions"],
 )

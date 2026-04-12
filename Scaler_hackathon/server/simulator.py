@@ -123,10 +123,10 @@ SEASON_MULTIPLIERS: Dict[str, float] = {
 
 # Base hourly demand curve (MW) — representative UK-style daily profile
 BASE_DEMAND_CURVE: List[float] = [
-    420, 400, 385, 375, 370, 380,   # 00:00–05:00  night trough
-    480, 600, 700, 780, 820, 850,   # 06:00–11:00  morning ramp
-    870, 880, 860, 840, 820, 800,   # 12:00–17:00  daytime plateau
-    830, 870, 860, 780, 680, 560,   # 18:00–23:00  evening peak → night
+    420, 400, 385, 375, 370, 380,   # 00:00-05:00  night trough
+    480, 600, 700, 780, 820, 850,   # 06:00-11:00  morning ramp
+    870, 880, 860, 840, 820, 800,   # 12:00-17:00  daytime plateau
+    830, 870, 860, 780, 680, 560,   # 18:00-23:00  evening peak → night
 ]
 
 # ---------------------------------------------------------------------------
