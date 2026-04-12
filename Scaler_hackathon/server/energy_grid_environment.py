@@ -379,7 +379,7 @@ class EnergyGridEnvironment(Environment):
         obs = EnergyGridObservation(
             # Demand & time
             demand_mw=round(sim.demand_mw, 2),
-            time_of_day=hour,
+            time_of_day=(sim.step % 24),  # Fixed: use step directly, already 0-indexed (bug: was showing 23 instead of 0)
             day=sim.day,
             step=sim.step,
             season=sim.season,

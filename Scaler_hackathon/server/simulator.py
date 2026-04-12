@@ -1012,7 +1012,7 @@ def compute_reward(
     if blackout:
         return -500.0   # catastrophic failure
 
-    unmet = max(0.0, demand_mw - supply_mw - load_shed_mw)
+    unmet = max(0.0, demand_mw - supply_mw)
     over = max(0.0, supply_mw - demand_mw)
 
     freq_error = abs(state.frequency.frequency - FREQ_NOMINAL)
@@ -1095,7 +1095,7 @@ def compute_reward(
     # ---- Oscillation penalty ----
     # Penalise repeatedly hitting max or min ramp — signals instability
     if state.coal_flip_streak >= 2:
-        reward -= 0.5 * state.coal_flip_streak  # stronger penalty to discourage oscillations
+        reward -= 1.0 * state.coal_flip_streak  # doubled penalty to strongly discourage oscillations (exploit fix)
 
     return reward
 
@@ -1270,11 +1270,10 @@ def simulator_step(
     # 11. Demand response (reduces effective demand)
     dr_mw = min(demand_response_mw, 150.0, state.demand_mw * 0.30)
 
-    # Clamp DR to affordability first, before applying reduction
-    if task_id == "hard":
-        # Use floor division to ensure we can always afford what we're requesting
-        max_affordable_dr = int(state.capital_budget / DR_COST_PER_MW) * DR_COST_PER_MW
-        dr_mw = min(dr_mw, max_affordable_dr)
+    # Enforce capital cost for DR in ALL tasks (not just hard)
+    # Capital budget is shared across all demands and responses
+    max_affordable_dr = int(state.capital_budget / DR_COST_PER_MW) * DR_COST_PER_MW
+    dr_mw = min(dr_mw, max_affordable_dr)
 
     # Apply reduction
     effective_demand = state.demand_mw - dr_mw
@@ -1282,8 +1281,8 @@ def simulator_step(
     # Track cumulative usage (only once, after capital affordability check)
     state.total_demand_response += dr_mw
 
-    if task_id == "hard":
-        state.capital_budget -= dr_mw * DR_COST_PER_MW
+    # Deduct capital cost in ALL TASKS (exploit fix: previously only in hard)
+    state.capital_budget -= dr_mw * DR_COST_PER_MW
 
     # 12. Battery
     passive_supply = solar_out + wind_out + coal_out + hydro_out + nuclear_out
