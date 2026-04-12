@@ -250,9 +250,7 @@ def score_capital_efficiency(log: EpisodeLog) -> float:
     capital_spent = log.initial_capital_budget - log.final_capital_budget
 
     if capital_spent <= 0:
-        # Agent didn't build anything — heavily penalized
-        # No infrastructure investment on hard task = critical failure planning
-        return -0.5
+        return 0.0
 
     reliability = score_reliability(log)
     budget_remaining_pct = log.final_capital_budget / max(1.0, log.initial_capital_budget)
@@ -262,7 +260,7 @@ def score_capital_efficiency(log: EpisodeLog) -> float:
     roi_score = min(1.0, roi)
 
     # Blend ROI with budget conservation
-    return 0.7 * roi_score + 0.3 * budget_remaining_pct
+    return max(0.0, min(1.0, 0.7 * roi_score + 0.3 * budget_remaining_pct))
 
 
 # ---------------------------------------------------------------------------

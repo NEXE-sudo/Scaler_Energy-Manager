@@ -197,7 +197,6 @@ class EnergyGridEnv(
             feedin_credits_mwh=obs_data.get("feedin_credits_mwh", 0.0),
 
             # Episode metadata
-            reward=obs_data.get("reward", 0.0),
             done=payload.get("done", False),
             reward=payload.get("reward"),
             episode_ended_early=obs_data.get("episode_ended_early", False),

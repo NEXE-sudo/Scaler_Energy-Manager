@@ -94,7 +94,7 @@ def main() -> int:
         try:
             for task_id in ["easy", "medium", "hard"]:
                 print(f"[START] task={task_id} env=energy-grid-openenv model={model_name}", flush=True)
-                print(f"[END] success=false steps=0 score=0.0 rewards=", flush=True)
+                print(f"[END] success=false steps=0 score=0.000 rewards=", flush=True)
         except Exception as inner_e:
             print(f"[ERROR] Even fallback output failed: {inner_e}", flush=True)
         
