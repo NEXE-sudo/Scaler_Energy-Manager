@@ -124,19 +124,16 @@ def score_reliability(log: EpisodeLog) -> float:
     Fraction of steps where demand was fully met (unmet < 1 MW tolerance).
 
     Returns 0.0 if a blackout occurred (catastrophic failure).
-    Partial credit for steps where shortfall was small.
+    Partial credit proportional to steps survived before blackout.
     """
     if log.blackout_occurred:
-        # Severe penalty — but not zero, partial progress still counts
         steps_before_blackout = log.early_termination_step or 0
         if steps_before_blackout == 0:
             return 0.0
-        # Score only steps before blackout, then halve as penalty
-        good_steps = sum(
-            1 for s in log.steps_logged[:steps_before_blackout]
-            if s.unmet_demand_mw < 1.0
-        )
-        return 0.5 * (good_steps / max(1, log.total_steps))
+        # Penalty proportional to survival rather than cliff effect
+        # Surviving half the episode: 0.25, surviving most: close to 1.0
+        survival_fraction = steps_before_blackout / max(1, log.total_steps)
+        return 0.5 * survival_fraction  # max 0.5 for blackout
 
     good_steps = sum(1 for s in log.steps_logged if s.unmet_demand_mw < 1.0)
     return good_steps / max(1, log.total_steps)
@@ -244,7 +241,7 @@ def score_capital_efficiency(log: EpisodeLog) -> float:
     Did the agent's plant investment decisions actually improve outcomes?
 
     Proxy metric: reliability improvement per capital spent.
-        - If no capital was spent: neutral score (0.5) — agent saved budget
+        - If no capital was spent: penalized (agent avoided required infrastructure)
         - If capital spent and reliability ≥ 0.7: good (scales with reliability)
         - If capital spent and reliability < 0.5: poor investment
 
@@ -253,8 +250,9 @@ def score_capital_efficiency(log: EpisodeLog) -> float:
     capital_spent = log.initial_capital_budget - log.final_capital_budget
 
     if capital_spent <= 0:
-        # Agent didn't build anything — neutral
-        return 0.50
+        # Agent didn't build anything — penalized, especially on hard task
+        # where infrastructure is critical
+        return 0.0
 
     reliability = score_reliability(log)
     budget_remaining_pct = log.final_capital_budget / max(1.0, log.initial_capital_budget)

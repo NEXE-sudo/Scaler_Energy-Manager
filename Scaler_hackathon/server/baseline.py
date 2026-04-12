@@ -155,8 +155,8 @@ Operational strategy:
 - Keep battery above 20% SoC. Minimise coal when demand is met.
 """
 
-    # Only inject plan for hard task steps 0-19 to save ~15k tokens in later steps
-    if task_id == "hard" and plan and step < 20:
+    # Only inject plan for hard task steps 0-39 (covers through coal outage at 23-25)
+    if task_id == "hard" and plan and step < 40:
         base += f"\n\nSTRATEGIC PLAN (follow this unless state forces deviation):\n{plan}"
     return base
 

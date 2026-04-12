@@ -862,7 +862,9 @@ def apply_event_end(event: str, state: GridSimState) -> None:
         if state.coal.boost_damage_steps == 0:
             state.coal.max_mw = COAL_MAX_MW
     elif event == "price_spike":
-        state.coal_price = 1.0
+        # Preserve the random walk trend (don't snap back to 1.0)
+        # Just cap at max to prevent unbounded growth
+        state.coal_price = min(2.5, state.coal_price)
     elif event == "grid_fault":
         state.transmission_capacity_mw = TRANSMISSION_NOMINAL_MW
 
@@ -1072,9 +1074,9 @@ def compute_reward(
         reward -= 0.1
 
     # ---- Battery wear ----
-    cycle_delta = (battery_discharged_mw + battery_charged_mw) / max(
-        1.0, state.battery.capacity_mwh
-    )
+    # Use discharged amount only (already accounts for efficiency losses)
+    # charging_inefficiency means charge_mw > actual stored, so use discharged as consistent unit
+    cycle_delta = battery_discharged_mw / max(1.0, state.battery.capacity_mwh)
     reward -= 0.005 * cycle_delta
 
     # ---- Spinning reserve shortfall ----
@@ -1095,12 +1097,13 @@ def compute_reward(
 def _compute_spinning_reserve(state: GridSimState) -> float:
     """Compute available spinning reserve from online synchronous machines."""
     reserve = 0.0
+    HYDRO_RESERVE_MIN_MWH = 10.0  # Minimum water to unlock reserve capacity
 
     if state.coal.online and state.coal.available:
         reserve += state.coal.max_mw - state.coal.output_mw
 
-    # Only count hydro reserve if reservoir has water available
-    if state.hydro.available and state.hydro.reservoir_mwh > 0:
+    # Only count hydro reserve if enough water is available
+    if state.hydro.available and state.hydro.reservoir_mwh > HYDRO_RESERVE_MIN_MWH:
         reserve += HYDRO_MAX_MW - state.hydro.output_mw
 
     if state.nuclear.available and state.nuclear.online:
@@ -1239,7 +1242,8 @@ def simulator_step(
         state.boost_used_count += 1
 
     # 9. Nuclear
-    scram_nuclear = "nuclear_trip" in event_schedule.get(state.step, [])
+    # Use active_events (after apply_event_start) to avoid double-triggering
+    scram_nuclear = "nuclear_trip" in state.active_events
     nuclear_out = step_nuclear(state.nuclear, nuclear_delta, scram_nuclear)
     state.nuclear.output_mw = nuclear_out
 
@@ -1260,7 +1264,8 @@ def simulator_step(
 
     # Clamp DR to affordability first, before applying reduction
     if task_id == "hard":
-        max_affordable_dr = state.capital_budget / DR_COST_PER_MW
+        # Use floor division to ensure we can always afford what we're requesting
+        max_affordable_dr = int(state.capital_budget / DR_COST_PER_MW) * DR_COST_PER_MW
         dr_mw = min(dr_mw, max_affordable_dr)
 
     # Apply reduction

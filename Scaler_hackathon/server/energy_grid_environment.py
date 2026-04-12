@@ -200,6 +200,7 @@ class EnergyGridEnvironment(Environment):
         )
         # Reset step counter to 0 since simulator_step incremented it during initial demand calculation
         self._sim.step = 0
+        self._sim.day = 1  # Also reset day (simulator_step checks if step % 24 == 0 at init)
         self._last_step_result = result
 
         return self._build_observation(reward=0.0, done=False)
