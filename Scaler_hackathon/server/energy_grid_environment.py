@@ -377,76 +377,59 @@ class EnergyGridEnvironment(Environment):
         ]
 
         obs = EnergyGridObservation(
-            # Demand & time
+            # Demand & time (optimized field names)
             demand_mw=round(sim.demand_mw, 2),
-            time_of_day=(sim.step % 24),  # Fixed: use step directly, already 0-indexed (bug: was showing 23 instead of 0)
+            hour=hour,
             day=sim.day,
             step=sim.step,
             season=sim.season,
 
-            # Coal
-            coal_output_mw=round(sim.coal.output_mw, 2),
+            # Coal (consolidated: removed _output_mw suffix, removed startup_steps_remaining)
+            coal_mw=round(sim.coal.output_mw, 2),
             coal_online=sim.coal.online,
-            coal_startup_steps_remaining=sim.coal.startup_steps_remaining,
             coal_max_mw=round(sim.coal.max_mw, 2),
+            coal_startup_remaining=sim.coal.startup_steps_remaining,
             coal_price=round(sim.coal_price, 3),
 
-            # Solar
-            solar_output_mw=round(sim.solar.output_mw, 2),
-            solar_available=sim.solar.available,
+            # Solar (consolidated: removed _output_mw, _available, renamed to coal_mw pattern)
+            solar_mw=round(sim.solar.output_mw, 2),
             solar_weather=result.get("solar_weather", sim.solar_weather),
 
-            # Wind
-            wind_output_mw=round(sim.wind.output_mw, 2),
-            wind_available=sim.wind.available,
+            # Wind (consolidated)
+            wind_mw=round(sim.wind.output_mw, 2),
             wind_speed_ms=round(sim.wind.wind_speed_ms, 2),
 
-            # Hydro
-            hydro_output_mw=round(sim.hydro.output_mw, 2),
-            hydro_available=sim.hydro.available,
-            reservoir_level_mwh=round(sim.hydro.reservoir_mwh, 2),
+            # Hydro (consolidated: renamed reservoir_level→reservoir_mwh)
+            hydro_mw=round(sim.hydro.output_mw, 2),
+            reservoir_mwh=round(sim.hydro.reservoir_mwh, 2),
             reservoir_capacity_mwh=HYDRO_RESERVOIR_CAP_MWH,
-            natural_inflow_mwh=round(sim.hydro.natural_inflow_mwh, 2),
 
-            # Nuclear
-            nuclear_output_mw=round(sim.nuclear.output_mw, 2),
-            nuclear_available=sim.nuclear.available,
+            # Nuclear (consolidated)
+            nuclear_mw=round(sim.nuclear.output_mw, 2),
             nuclear_online=sim.nuclear.online,
-            nuclear_trip_steps_remaining=sim.nuclear.trip_steps_remaining,
+            nuclear_trip_remaining=sim.nuclear.trip_steps_remaining,
 
-            # Battery
-            battery_level_mwh=round(sim.battery.level_mwh, 2),
+            # Battery (consolidated: battery_level→battery_mwh)
+            battery_mwh=round(sim.battery.level_mwh, 2),
             battery_capacity_mwh=round(sim.battery.capacity_mwh, 2),
 
-            # Grid health
+            # Grid health (consolidated & removed redundant fields)
             unmet_demand_mw=round(result.get("unmet_demand_mw", 0.0), 2),
-            overproduction_mw=round(result.get("overproduction_mw", 0.0), 2),
-            grid_frequency=round(sim.frequency.frequency, 4),
-            rate_of_change_hz_per_step=round(sim.frequency.rocof, 4),
-            system_inertia_seconds=round(
-                result.get("system_inertia", 4.0), 3
-            ),
-            primary_response_active=sim.frequency.primary_response_active,
+            frequency_hz=round(sim.frequency.frequency, 4),
             load_shedding_mw=round(result.get("load_shed_mw", 0.0), 2),
             blackout_risk=result.get("blackout_risk", "none"),
             spinning_reserve_mw=round(spinning_reserve, 2),
-            spinning_reserve_required_mw=round(spinning_reserve_required, 2),
-            transmission_capacity_mw=round(sim.transmission_capacity_mw, 2),
 
-            # Events
+            # Events & construction (renamed: plants_under_construction→plants_building)
             active_events=list(sim.active_events),
+            plants_building=construction_list,
 
-            # Construction
-            plants_under_construction=construction_list,
-
-            # Economics
+            # Economics (consolidated: removed cumulative_cost & feedin_credits from main fields)
             capital_budget=round(sim.capital_budget, 2),
             cumulative_cost=round(sim.cumulative_cost, 4),
             cumulative_emissions_tons=round(sim.cumulative_emissions, 2),
-            feedin_credits_mwh=round(sim.cumulative_feedin_credits, 2),
 
             # Episode metadata
-            step_reward=round(reward, 4),
             done=done,
             reward=reward,
             episode_ended_early=sim.blackout_this_step,

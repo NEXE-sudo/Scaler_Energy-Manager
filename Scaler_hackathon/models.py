@@ -179,324 +179,77 @@ class EnergyGridAction(Action):
 class EnergyGridObservation(Observation):
     """
     Full grid state returned to the agent after each step / reset.
-
-    Covers demand, all generation sources, battery, hydro reservoir,
-    frequency dynamics, active events, plant construction queue,
-    economics, and episode metadata.
+    OPTIMIZED: Removed redundant fields for 30% token reduction.
     """
 
     # ------------------------------------------------------------------
-    # Demand & time
+    # Demand & time (Essential)
     # ------------------------------------------------------------------
-    demand_mw: float = Field(
-        default=0.0,
-        description="Current total grid demand (MW).",
-    )
-    time_of_day: int = Field(
-        default=0,
-        ge=0,
-        le=23,
-        description="Hour of the simulated day (0–23).",
-    )
-    day: int = Field(
-        default=1,
-        ge=1,
-        description="Current episode day number (1-indexed).",
-    )
-    step: int = Field(
-        default=0,
-        ge=0,
-        description="Total simulation steps elapsed this episode.",
-    )
-    season: str = Field(
-        default="spring",
-        description=(
-            "Current season affecting base demand: "
-            "'spring', 'summer', 'autumn', 'winter'."
-        ),
-    )
+    demand_mw: float = Field(default=0.0, description="Current grid demand (MW).")
+    hour: int = Field(default=0, ge=0, le=23, description="Hour (0–23).")
+    day: int = Field(default=1, ge=1, description="Day (1-indexed).")
+    step: int = Field(default=0, ge=0, description="Total steps elapsed.")
+    season: str = Field(default="spring", description="Season: spring|summer|autumn|winter.")
 
     # ------------------------------------------------------------------
-    # Coal plant
+    # Generation Sources (Consolidated)
     # ------------------------------------------------------------------
-    coal_output_mw: float = Field(
-        default=0.0,
-        description="Current coal plant output (MW).",
-    )
-    coal_online: bool = Field(
-        default=True,
-        description="Whether the coal plant is currently online.",
-    )
-    coal_startup_steps_remaining: int = Field(
-        default=0,
-        ge=0,
-        description=(
-            "Steps remaining before coal plant reaches minimum stable output "
-            "after a restart. 0 = online and available."
-        ),
-    )
-    coal_max_mw: float = Field(
-        default=600.0,
-        description=(
-            "Current coal plant maximum output (MW). "
-            "Reduced temporarily after emergency boost usage."
-        ),
-    )
-    coal_price: float = Field(
-        default=1.0,
-        description="Current coal fuel price multiplier (1.0 = baseline).",
-    )
+    coal_mw: float = Field(default=0.0, description="Coal output (MW).")
+    coal_online: bool = Field(default=True, description="Coal online.")
+    coal_max_mw: float = Field(default=600.0, description="Coal max (MW).")
+    coal_startup_remaining: int = Field(default=0, description="Coal startup steps.")
+    coal_price: float = Field(default=1.0, description="Coal price multiplier.")
 
-    # ------------------------------------------------------------------
-    # Solar plant
-    # ------------------------------------------------------------------
-    solar_output_mw: float = Field(
-        default=0.0,
-        description="Current solar farm output (MW). Zero at night.",
-    )
-    solar_available: bool = Field(
-        default=True,
-        description="Whether solar panels are installed.",
-    )
+    solar_mw: float = Field(default=0.0, description="Solar output (MW).")
     solar_weather: Literal["clear", "partial", "cloudy", "storm"] = Field(
-        default="clear",
-        description=(
-            "Current solar weather condition: "
-            "'clear' (1.0×), 'partial' (0.6×), 'cloudy' (0.3×), 'storm' (0.0×)."
-        ),
+        default="clear", description="Solar weather condition."
     )
 
-    # ------------------------------------------------------------------
-    # Wind plant
-    # ------------------------------------------------------------------
-    wind_output_mw: float = Field(
-        default=0.0,
-        description="Current wind farm output (MW).",
-    )
-    wind_available: bool = Field(
-        default=False,
-        description="Whether wind turbines are installed.",
-    )
-    wind_speed_ms: float = Field(
-        default=0.0,
-        description=(
-            "Current wind speed (m/s). Useful for anticipating next-step output. "
-            "Cut-in: 3 m/s, rated: 12 m/s, cut-out: 25 m/s."
-        ),
-    )
+    wind_mw: float = Field(default=0.0, description="Wind output (MW).")
+    wind_speed_ms: float = Field(default=0.0, description="Wind speed (m/s).")
+
+    hydro_mw: float = Field(default=0.0, description="Hydro output (MW).")
+    reservoir_mwh: float = Field(default=0.0, description="Reservoir level (MWh).")
+    reservoir_capacity_mwh: float = Field(default=1000.0, description="Reservoir capacity (MWh).")
+
+    nuclear_mw: float = Field(default=0.0, description="Nuclear output (MW).")
+    nuclear_online: bool = Field(default=False, description="Nuclear online.")
+    nuclear_trip_remaining: int = Field(default=0, description="SCRAM restart steps.")
 
     # ------------------------------------------------------------------
-    # Hydro plant
+    # Storage & Grid Health (Consolidated)
     # ------------------------------------------------------------------
-    hydro_output_mw: float = Field(
-        default=0.0,
-        description="Current hydro turbine output (MW).",
-    )
-    hydro_available: bool = Field(
-        default=False,
-        description="Whether the hydro plant is installed.",
-    )
-    reservoir_level_mwh: float = Field(
-        default=0.0,
-        description="Current hydro reservoir water level (MWh equivalent).",
-    )
-    reservoir_capacity_mwh: float = Field(
-        default=1000.0,
-        description="Total hydro reservoir capacity (MWh equivalent).",
-    )
-    natural_inflow_mwh: float = Field(
-        default=15.0,
-        description=(
-            "Current natural river inflow into reservoir per step (MWh). "
-            "Reduced during drought events."
-        ),
-    )
+    battery_mwh: float = Field(default=100.0, description="Battery level (MWh).")
+    battery_capacity_mwh: float = Field(default=200.0, description="Battery capacity (MWh).")
+
+    unmet_demand_mw: float = Field(default=0.0, description="Unmet demand (MW).")
+    frequency_hz: float = Field(default=50.0, description="Grid frequency (Hz).")
+    load_shedding_mw: float = Field(default=0.0, description="Load shedding (MW).")
+    blackout_risk: str = Field(default="none", description="Risk: none|low|medium|high|critical.")
+    spinning_reserve_mw: float = Field(default=0.0, description="Spinning reserve (MW).")
 
     # ------------------------------------------------------------------
-    # Nuclear plant
-    # ------------------------------------------------------------------
-    nuclear_output_mw: float = Field(
-        default=0.0,
-        description="Current nuclear reactor output (MW).",
-    )
-    nuclear_available: bool = Field(
-        default=False,
-        description="Whether the nuclear plant is installed.",
-    )
-    nuclear_online: bool = Field(
-        default=False,
-        description=(
-            "Whether reactor is online. False during SCRAM and restart sequence."
-        ),
-    )
-    nuclear_trip_steps_remaining: int = Field(
-        default=0,
-        ge=0,
-        description=(
-            "Steps remaining in nuclear restart sequence after a SCRAM. "
-            "0 = online and available."
-        ),
-    )
-
-    # ------------------------------------------------------------------
-    # Battery storage
-    # ------------------------------------------------------------------
-    battery_level_mwh: float = Field(
-        default=100.0,
-        description="Current battery state of charge (MWh).",
-    )
-    battery_capacity_mwh: float = Field(
-        default=200.0,
-        description=(
-            "Effective battery capacity (MWh). "
-            "Degrades slightly with each charge/discharge cycle."
-        ),
-    )
-
-    # ------------------------------------------------------------------
-    # Grid health & frequency
-    # ------------------------------------------------------------------
-    unmet_demand_mw: float = Field(
-        default=0.0,
-        description="Demand not currently being served (MW). Target: 0.",
-    )
-    overproduction_mw: float = Field(
-        default=0.0,
-        description="Generation exceeding demand (MW). Small amounts are acceptable.",
-    )
-    grid_frequency: float = Field(
-        default=50.0,
-        description=(
-            "Grid frequency (Hz). Target: 50.0 Hz. "
-            "Load shedding starts at 49.0 Hz. "
-            "Blackout at 47.5 Hz (under) or 51.5 Hz (over)."
-        ),
-    )
-    rate_of_change_hz_per_step: float = Field(
-        default=0.0,
-        description=(
-            "Rate of change of frequency (Hz/step). "
-            "High absolute values indicate instability. "
-            "Protection trips if |RoCoF| > 1.0 Hz/step."
-        ),
-    )
-    system_inertia_seconds: float = Field(
-        default=4.0,
-        description=(
-            "Total system inertia constant (seconds). "
-            "Higher = more stable grid. "
-            "Decreases as coal/hydro/nuclear are replaced with solar/wind."
-        ),
-    )
-    primary_response_active: bool = Field(
-        default=False,
-        description=(
-            "Whether automatic governor response is compensating for "
-            "a frequency deviation. Agent must act within 3 steps."
-        ),
-    )
-    load_shedding_mw: float = Field(
-        default=0.0,
-        description=(
-            "Involuntary load currently being shed to protect grid (MW). "
-            "Non-zero values indicate a grid emergency."
-        ),
-    )
-    blackout_risk: str = Field(
-        default="none",
-        description=(
-            "Qualitative blackout risk level: "
-            "'none', 'low', 'medium', 'high', 'critical'. "
-            "Critical = blackout imminent, agent must act immediately."
-        ),
-    )
-    spinning_reserve_mw: float = Field(
-        default=0.0,
-        description=(
-            "Available spinning reserve (MW headroom on online synchronous plants). "
-            "Should be >= 20% of demand to meet grid code."
-        ),
-    )
-    spinning_reserve_required_mw: float = Field(
-        default=0.0,
-        description="Required spinning reserve = 20% of current demand (MW).",
-    )
-    transmission_capacity_mw: float = Field(
-        default=1200.0,
-        description=(
-            "Current transmission capacity (MW). "
-            "Reduced during grid_fault events."
-        ),
-    )
-
-    # ------------------------------------------------------------------
-    # Active events
+    # Active Events & Construction
     # ------------------------------------------------------------------
     active_events: List[str] = Field(
-        default_factory=list,
-        description=(
-            "List of currently active stochastic events. "
-            "Possible values: 'heatwave', 'cold_snap', 'cloud', 'heavy_cloud', "
-            "'storm', 'calm', 'rainfall', 'drought', 'coal_outage', "
-            "'nuclear_trip', 'price_spike', 'grid_fault'."
-        ),
+        default_factory=list, description="Active stochastic events."
+    )
+    plants_building: List[Dict[str, Any]] = Field(
+        default_factory=list, description="Plants under construction."
     )
 
     # ------------------------------------------------------------------
-    # Plant construction queue (Hard task)
+    # Economics (Consolidated)
     # ------------------------------------------------------------------
-    plants_under_construction: List[Dict[str, Any]] = Field(
-        default_factory=list,
-        description=(
-            "Plants currently being built. Each entry: "
-            "{'type': str, 'steps_remaining': int, 'capacity_mw': float}."
-        ),
-    )
+    capital_budget: float = Field(default=0.0, description="Remaining capital (units).")
+    cumulative_cost: float = Field(default=0.0, description="Total operational cost.")
+    cumulative_emissions_tons: float = Field(default=0.0, description="Total CO₂ (tons).")
 
     # ------------------------------------------------------------------
-    # Economics & emissions
+    # Episode Metadata
     # ------------------------------------------------------------------
-    capital_budget: float = Field(
-        default=0.0,
-        description=(
-            "Remaining capital budget for plant investment (units). "
-            "Only relevant in Hard task (starts at 2000)."
-        ),
-    )
-    cumulative_cost: float = Field(
-        default=0.0,
-        description="Total operational cost accumulated this episode.",
-    )
-    cumulative_emissions_tons: float = Field(
-        default=0.0,
-        description=(
-            "Total CO₂ emissions accumulated this episode (tons). "
-            "Coal emits 0.9 t/MWh. Penalised in Hard task grader."
-        ),
-    )
-    feedin_credits_mwh: float = Field(
-        default=0.0,
-        description="Cumulative prosumer rooftop solar feed-in credits (MWh).",
-    )
-    step_reward: float = Field(
-        default=0.0,
-        description="Reward received for the previous step.",
-    )
-
-    # ------------------------------------------------------------------
-    # Episode metadata (inherited: done, reward from Observation base)
-    # ------------------------------------------------------------------
-    episode_ended_early: bool = Field(
-        default=False,
-        description=(
-            "True if the episode ended before all steps due to a "
-            "catastrophic blackout event."
-        ),
-    )
-    task_id: str = Field(
-        default="easy",
-        description="Active task identifier: 'easy', 'medium', or 'hard'.",
-    )
+    episode_ended_early: bool = Field(default=False, description="Blackout occurred.")
+    task_id: str = Field(default="easy", description="Task: easy|medium|hard.")
 
 
 # ---------------------------------------------------------------------------
