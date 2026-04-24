@@ -18,3 +18,4 @@ server/grader.py
 server/normalization.py
 server/simulator.py
 server/tasks.py
+tests/test_env.py

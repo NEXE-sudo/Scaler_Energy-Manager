@@ -1,24 +1,32 @@
 """
-Energy Grid Management Environment — OpenEnv Environment Implementation.
+Energy Grid Management Environment — Multi-Agent OpenEnv Implementation.
 
-This module implements the OpenEnv Environment interface for the energy
-grid simulation. It wires together:
-    - simulator.py  (physics engine)
-    - tasks.py      (task configurations)
-    - grader.py     (episode scoring)
-    - models.py     (typed Pydantic action/observation models)
+Extends the single-agent environment to support three specialized agents:
 
-Public interface (OpenEnv spec):
-    reset(task_id="easy")  → EnergyGridObservation
-    step(action)           → EnergyGridObservation
-    state                  → State
+    PlanningAgent  — capital investment decisions (infrequent, long-horizon)
+    DispatchAgent  — real-time generation control (every step)
+    MarketAgent    — economic optimization + grid trading (every step)
 
-The environment maintains full episode state including the event schedule
-(pre-computed at reset for determinism), the EpisodeLog (for grading),
-and the GridSimState (physics).
+Multi-agent step protocol:
+    Each simulation step requires actions from all three agents before
+    the physics engine advances. The environment buffers partial actions
+    and advances the simulator only when all three have been submitted.
 
-Concurrent sessions are supported — each WebSocket client gets its own
-environment instance via factory mode in app.py.
+    Order within a step:
+        1. planning action received  → buffered
+        2. dispatch action received  → buffered
+        3. market action received    → merge all three → simulator_step()
+                                    → return observation to all agents
+
+    Single-agent backward compatibility:
+        POST /step with EnergyGridAction triggers immediate simulator_step()
+        using the unified action directly. No buffering needed.
+
+Reward decomposition:
+    The unified simulator reward is decomposed into per-agent signals:
+        dispatch_reward = reliability + frequency + spinning reserve
+        planning_reward = emissions + capital efficiency
+        market_reward   = cost efficiency + trading profit
 """
 
 from __future__ import annotations
@@ -30,9 +38,21 @@ from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import State
 
 try:
-    from ..models import EnergyGridAction, EnergyGridObservation
+    from ..models import (
+        EnergyGridAction,
+        EnergyGridObservation,
+        PlanningAgentAction,
+        DispatchAgentAction,
+        MarketAgentAction,
+    )
 except ImportError:
-    from models import EnergyGridAction, EnergyGridObservation
+    from models import (
+        EnergyGridAction,
+        EnergyGridObservation,
+        PlanningAgentAction,
+        DispatchAgentAction,
+        MarketAgentAction,
+    )
 
 try:
     from .normalization import normalize_observation
@@ -79,26 +99,101 @@ except ImportError:
     )
 
 
+# ---------------------------------------------------------------------------
+# Per-agent reward decomposition weights
+# These split the unified simulator reward into three per-agent signals.
+# Weights sum to 1.0 across each component.
+# ---------------------------------------------------------------------------
+
+DISPATCH_REWARD_COMPONENTS = {
+    "unmet_demand",       # -0.25 * unmet_demand_mw
+    "frequency",          # -0.2 * freq_error + 0.2 bonus
+    "spinning_reserve",   # -0.05 * shortfall
+    "emergency_boost",    # -3.0 if used
+    "load_shedding",      # -0.30 * load_shed_mw
+}
+
+PLANNING_REWARD_COMPONENTS = {
+    "emissions",          # -0.001 * coal_mw * emission_factor
+    "renewable_bonus",    # +0.015*wind + 0.020*solar + 0.010*hydro
+    "hydro_spillage",     # -0.05 if spillage
+    "hydro_critical",     # -0.10 if reservoir critical
+}
+
+MARKET_REWARD_COMPONENTS = {
+    "coal_cost",          # -0.003 * coal_mw * coal_price
+    "overproduction",     # -0.001 * over
+    "demand_response",    # penalty/bonus based on DR usage
+    "feedin",             # +0.002 * feedin_mw
+    "trading",            # grid import/export credits (new)
+}
+
+
+# ---------------------------------------------------------------------------
+# Action buffer — holds partial multi-agent actions within one step
+# ---------------------------------------------------------------------------
+
+class StepActionBuffer:
+    """
+    Buffers partial actions from each agent within a single simulation step.
+
+    A step advances only when all required agents have submitted.
+    In single-agent mode the buffer is bypassed entirely.
+    """
+
+    def __init__(self) -> None:
+        self.planning: Optional[PlanningAgentAction] = None
+        self.dispatch: Optional[DispatchAgentAction] = None
+        self.market: Optional[MarketAgentAction] = None
+
+    def reset(self) -> None:
+        self.planning = None
+        self.dispatch = None
+        self.market = None
+
+    @property
+    def is_complete(self) -> bool:
+        """True when all three agents have submitted actions."""
+        return (
+            self.planning is not None
+            and self.dispatch is not None
+            and self.market is not None
+        )
+
+    def to_unified_action(self) -> EnergyGridAction:
+        """
+        Merge buffered agent actions into a unified EnergyGridAction
+        for the simulator. Called only when is_complete is True.
+        """
+        assert self.is_complete, "Cannot merge incomplete action buffer"
+        return EnergyGridAction.from_agents(
+            dispatch=self.dispatch,
+            planning=self.planning,
+            market=self.market,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Main environment class
+# ---------------------------------------------------------------------------
+
 class EnergyGridEnvironment(Environment):
     """
-    OpenEnv-compliant Energy Grid Management Environment.
+    Multi-agent Energy Grid Management Environment.
 
-    Simulates operating a national electricity grid over 1-3 simulated
-    days. The agent dispatches generation sources, manages battery
-    storage, responds to stochastic weather and fault events, and in the
-    Hard task makes long-term plant investment decisions.
+    Supports two modes:
 
-    Supports three tasks:
-        easy   — coal + battery, 1 day, no events
-        medium — coal + solar + wind + battery, 2 days, weather events
-        hard   — all sources buildable, 3 days, full event roster
+    Single-agent mode (backward compatible):
+        env.step(EnergyGridAction) → advances simulator immediately.
+        Used by /step endpoint and all existing baseline/training scripts.
 
-    Usage:
-        >>> env = EnergyGridEnvironment()
-        >>> obs = env.reset("medium")
-        >>> action = EnergyGridAction(coal_delta=50.0, battery_mode="idle")
-        >>> obs = env.step(action)
-        >>> score = env.get_last_grade()
+    Multi-agent mode:
+        env.step_planning(PlanningAgentAction)  → buffers
+        env.step_dispatch(DispatchAgentAction)  → buffers
+        env.step_market(MarketAgentAction)      → completes step, advances simulator
+        Returns observation with per-agent reward breakdown.
+
+    All three agents share the same EnergyGridObservation.
     """
 
     SUPPORTS_CONCURRENT_SESSIONS: bool = True
@@ -115,47 +210,32 @@ class EnergyGridEnvironment(Environment):
         self._plants_built: List[str] = []
         self._normalize = normalize
 
+        # Multi-agent state
+        self._action_buffer = StepActionBuffer()
+        self._last_obs: Optional[EnergyGridObservation] = None
+
+        # Grid trading state (new for market agent)
+        self._trading_credits: float = 0.0
+        self._grid_export_mw: float = 0.0
+        self._grid_import_mw: float = 0.0
+
     # ------------------------------------------------------------------
     # OpenEnv interface
     # ------------------------------------------------------------------
 
     @property
     def current_task_id(self) -> str:
-        """Return the current task_id for the active episode."""
         return self._task_id
 
     def reset(self, task_id: str = "easy", seed: int = None) -> EnergyGridObservation:
-        """
-        Reset the environment for a new episode.
-
-        Args:
-            task_id: One of 'easy', 'medium', 'hard'.
-            seed: Optional random seed override. If None, uses task default seed.
-                  Set to a different value to generate episode variant with same
-                  task parameters but different stochastic events (weather,
-                  failures, prices). Useful for robustness evaluation.
-
-        Returns:
-            Initial EnergyGridObservation with starting grid state.
-            
-        Example:
-            >>> env = EnergyGridEnvironment()
-            >>> obs = env.reset("medium", seed=42)  # Variant of medium task
-            >>> obs = env.reset("medium", seed=100) # Different variant
-        """
         if task_id not in TASK_ORDER:
             task_id = "easy"
 
         task = get_task(task_id)
         self._task_id = task_id
-
-        # Fresh OpenEnv state
         self._state = State(episode_id=str(uuid4()), step_count=0)
 
-        # Build physics state with optional seed override
         episode_seed = seed if seed is not None else task["seed"]
-
-        # Build physics state
         self._sim = build_initial_state(
             task_id=task_id,
             seed=episode_seed,
@@ -164,7 +244,6 @@ class EnergyGridEnvironment(Environment):
         )
         self._sim.capital_budget = task["capital_budget"]
 
-        # Pre-schedule all events for this episode (deterministic)
         raw_schedule = schedule_events(
             task_id=task_id,
             total_steps=task["total_steps"],
@@ -173,7 +252,6 @@ class EnergyGridEnvironment(Environment):
         self._event_schedule = raw_schedule
         self._event_end_schedule = self._build_end_schedule(raw_schedule)
 
-        # Fresh episode log
         self._episode_log = EpisodeLog(
             task_id=task_id,
             total_steps=task["total_steps"],
@@ -183,8 +261,14 @@ class EnergyGridEnvironment(Environment):
         self._last_grade = None
         self._last_step_result = {}
         self._plants_built = []
+        self._action_buffer.reset()
 
-        # Compute initial demand and other time-dependent values for step 0
+        # Reset trading state
+        self._trading_credits = 0.0
+        self._grid_export_mw = 0.0
+        self._grid_import_mw = 0.0
+
+        # Initial demand calculation
         result = simulator_step(
             state=self._sim,
             coal_delta=0,
@@ -198,34 +282,29 @@ class EnergyGridEnvironment(Environment):
             event_end_schedule=self._event_end_schedule,
             task_id=task_id,
         )
-        # Reset step counter to 0 since simulator_step incremented it during initial demand calculation
         self._sim.step = 0
-        self._sim.day = 1  # Also reset day (simulator_step checks if step % 24 == 0 at init)
+        self._sim.day = 1
         self._last_step_result = result
 
-        return self._build_observation(reward=0.0, done=False)
+        obs = self._build_observation(reward=0.0, done=False)
+        self._last_obs = obs
+        return obs
 
-    def step(self, action: EnergyGridAction) -> EnergyGridObservation:  # type: ignore[override]
+    # ------------------------------------------------------------------
+    # Single-agent step (backward compatible)
+    # ------------------------------------------------------------------
+
+    def step(self, action: EnergyGridAction) -> EnergyGridObservation:
         """
-        Execute one simulation step.
-
-        Args:
-            action: EnergyGridAction with generation adjustments and
-                    optional plant/emergency actions.
-
-        Returns:
-            EnergyGridObservation reflecting the new grid state,
-            plus reward and done flag.
+        Single-agent step. Accepts unified EnergyGridAction and advances
+        the simulator immediately. Fully backward compatible with all
+        existing code (baseline.py, training scripts, /step endpoint).
         """
         if self._sim is None:
-            # Auto-reset if step called before reset
             return self.reset(self._task_id)
-
-        # Guard: prevent stepping after episode has ended
         if self._sim.episode_ended:
             return self._build_observation(reward=0.0, done=True)
 
-        # Run physics
         result = simulator_step(
             state=self._sim,
             coal_delta=action.coal_delta,
@@ -240,59 +319,242 @@ class EnergyGridEnvironment(Environment):
             task_id=self._task_id,
         )
         self._last_step_result = result
-
-        # Detect newly available plants by comparing before/after
-        # (advance_construction is called inside simulator_step)
-        for ptype in ["solar", "wind", "hydro", "nuclear"]:
-            plant = getattr(self._sim, ptype)
-            if plant.available and ptype not in self._plants_built:
-                self._plants_built.append(ptype)
-
-        # Log this step for grading
+        self._track_plants()
         self._log_step(result)
-
-        # Update OpenEnv step counter
         self._state.step_count += 1
 
         reward = result["reward"]
         done = result["done"]
 
-        # If episode ended, finalise the log and grade
         if done:
             self._finalise_episode()
 
-        return self._build_observation(reward=reward, done=done)
-
-    @property
-    def state(self) -> State:
-        """Return current OpenEnv State (episode_id + step_count)."""
-        return self._state
+        obs = self._build_observation(reward=reward, done=done)
+        self._last_obs = obs
+        return obs
 
     # ------------------------------------------------------------------
-    # Grading interface (used by /grader endpoint)
+    # Multi-agent steps
+    # ------------------------------------------------------------------
+
+    def step_planning(
+        self, action: PlanningAgentAction
+    ) -> EnergyGridObservation:
+        """
+        Receive planning agent action. Buffers until all agents submit.
+
+        Returns the CURRENT observation (unchanged) — the simulator has
+        not advanced yet. The observation only updates after step_market()
+        completes the step.
+
+        The planning agent typically fires once at episode start and then
+        reactively when events change the capacity outlook.
+        """
+        if self._sim is None:
+            return self.reset(self._task_id)
+
+        self._action_buffer.planning = action
+
+        # If already complete (e.g. planning submitted last), advance
+        if self._action_buffer.is_complete:
+            return self._advance_multi_agent_step()
+
+        # Return current obs — step not yet complete
+        return self._last_obs or self._build_observation(reward=0.0, done=False)
+
+    def step_dispatch(
+        self, action: DispatchAgentAction
+    ) -> EnergyGridObservation:
+        """
+        Receive dispatch agent action. Buffers until all agents submit.
+
+        Returns current observation if step not yet complete.
+        Advances simulator if this completes the action buffer.
+        """
+        if self._sim is None:
+            return self.reset(self._task_id)
+
+        self._action_buffer.dispatch = action
+
+        if self._action_buffer.is_complete:
+            return self._advance_multi_agent_step()
+
+        return self._last_obs or self._build_observation(reward=0.0, done=False)
+
+    def step_market(
+        self, action: MarketAgentAction
+    ) -> EnergyGridObservation:
+        """
+        Receive market agent action.
+
+        This is typically the LAST action submitted each step (market
+        agent responds to what dispatch and planning have decided).
+        Advances the simulator when the buffer is complete.
+
+        Also handles grid import/export economics before calling
+        simulator_step().
+        """
+        if self._sim is None:
+            return self.reset(self._task_id)
+
+        self._action_buffer.market = action
+
+        if self._action_buffer.is_complete:
+            return self._advance_multi_agent_step()
+
+        return self._last_obs or self._build_observation(reward=0.0, done=False)
+
+    def _advance_multi_agent_step(self) -> EnergyGridObservation:
+        """
+        Internal: advance simulator using the completed action buffer.
+        Called when all three agents have submitted actions for this step.
+        """
+        if self._sim.episode_ended:
+            return self._build_observation(reward=0.0, done=True)
+
+        unified = self._action_buffer.to_unified_action()
+        market = self._action_buffer.market
+
+        # ── Grid trading (new market agent feature) ──────────────────────
+        # Apply import/export BEFORE simulator_step so demand is adjusted
+        net_import = max(0.0, market.grid_import_mw - market.grid_export_mw)
+        net_export = max(0.0, market.grid_export_mw - market.grid_import_mw)
+
+        # Trading economics
+        coal_price = self._sim.coal_price
+        import_cost = net_import * coal_price * 1.2   # import at 20% premium
+        export_revenue = net_export * 0.8             # export at 80% spot
+
+        trading_delta = export_revenue - import_cost
+        self._trading_credits += trading_delta
+        self._sim.capital_budget = max(0.0, self._sim.capital_budget - import_cost)
+        self._grid_export_mw = net_export
+        self._grid_import_mw = net_import
+
+        # Adjust demand for import (adds to supply side)
+        # We inject net_import as a demand_response reduction equivalent
+        effective_dr = unified.demand_response_mw + net_import
+        effective_dr = min(effective_dr, 150.0)
+
+        # ── Run simulator ─────────────────────────────────────────────────
+        result = simulator_step(
+            state=self._sim,
+            coal_delta=unified.coal_delta,
+            hydro_delta=unified.hydro_delta,
+            nuclear_delta=unified.nuclear_delta,
+            battery_mode=unified.battery_mode,
+            emergency_coal_boost=unified.emergency_coal_boost,
+            demand_response_mw=effective_dr,
+            plant_action=unified.plant_action,
+            event_schedule=self._event_schedule,
+            event_end_schedule=self._event_end_schedule,
+            task_id=self._task_id,
+        )
+        self._last_step_result = result
+        self._track_plants()
+        self._log_step(result)
+        self._state.step_count += 1
+
+        # ── Decompose reward ──────────────────────────────────────────────
+        reward = result["reward"]
+        dispatch_r, planning_r, market_r = self._decompose_reward(
+            result=result,
+            trading_delta=trading_delta,
+            used_emergency_boost=unified.emergency_coal_boost,
+        )
+
+        done = result["done"]
+        if done:
+            self._finalise_episode()
+
+        # Clear buffer for next step
+        self._action_buffer.reset()
+
+        obs = self._build_observation(
+            reward=reward,
+            done=done,
+            dispatch_reward=dispatch_r,
+            planning_reward=planning_r,
+            market_reward=market_r,
+        )
+        self._last_obs = obs
+        return obs
+
+    # ------------------------------------------------------------------
+    # Reward decomposition
+    # ------------------------------------------------------------------
+
+    def _decompose_reward(
+        self,
+        result: Dict[str, Any],
+        trading_delta: float,
+        used_emergency_boost: bool,
+    ) -> tuple[float, float, float]:
+        """
+        Split the unified simulator reward into per-agent signals.
+
+        Returns (dispatch_reward, planning_reward, market_reward).
+
+        These are approximations — the simulator computes one scalar
+        reward. We decompose it by attributing each penalty/bonus to
+        the agent whose action caused it.
+        """
+        sim = self._sim
+        unmet = result.get("unmet_demand_mw", 0.0)
+        over = result.get("overproduction_mw", 0.0)
+        load_shed = result.get("load_shed_mw", 0.0)
+        freq_error = abs(sim.frequency.frequency - 50.0)
+        reserve_shortfall = max(
+            0.0,
+            sim.demand_mw * SPINNING_RESERVE_RATIO - _compute_spinning_reserve(sim),
+        )
+
+        # Dispatch reward: reliability + frequency + reserve
+        dispatch_r = (
+            - 0.25 * unmet
+            - 0.30 * load_shed
+            - 0.20 * freq_error
+            + (0.2 if freq_error < 0.1 else 0.0)
+            - 0.05 * reserve_shortfall / max(1.0, sim.demand_mw)
+            - (3.0 if used_emergency_boost else 0.0)
+        )
+
+        # Planning reward: emissions + renewable bonus
+        wind_out = sim.wind.output_mw if sim.wind.available else 0.0
+        solar_out = sim.solar.output_mw if sim.solar.available else 0.0
+        hydro_out = sim.hydro.output_mw if sim.hydro.available else 0.0
+        coal_mw = sim.coal.output_mw
+
+        renewable_bonus = min(0.30,
+            0.015 * wind_out + 0.020 * solar_out + 0.010 * hydro_out
+        )
+        planning_r = (
+            - 0.001 * coal_mw * 0.9     # emissions
+            + renewable_bonus
+        )
+
+        # Market reward: cost + trading
+        market_r = (
+            - 0.003 * coal_mw * sim.coal_price
+            - 0.001 * over
+            + trading_delta * 0.01      # normalised trading profit
+        )
+
+        return dispatch_r, planning_r, market_r
+
+    # ------------------------------------------------------------------
+    # Grading interface
     # ------------------------------------------------------------------
 
     def get_last_grade(self) -> Optional[Dict[str, Any]]:
-        """
-        Return the graded result for the most recently completed episode.
-
-        Returns None if no episode has been completed yet.
-        """
         if self._last_grade is None:
             return None
         return grade_result_to_dict(self._last_grade)
 
     def grade_current_episode(self) -> Optional[Dict[str, Any]]:
-        """
-        Grade the current episode mid-run (partial grade).
-
-        Useful for inspecting progress without ending the episode.
-        Finalises the log temporarily without ending the episode.
-        """
         if self._episode_log is None or not self._episode_log.steps_logged:
             return None
 
-        # Snapshot current state into log without permanently finalising
         temp_log = EpisodeLog(
             task_id=self._episode_log.task_id,
             total_steps=self._episode_log.total_steps,
@@ -318,18 +580,20 @@ class EnergyGridEnvironment(Environment):
         return grade_result_to_dict(result)
 
     # ------------------------------------------------------------------
-    # Internal helpers
+    # Internal helpers (unchanged from original)
     # ------------------------------------------------------------------
+
+    def _track_plants(self) -> None:
+        """Detect newly completed plants."""
+        for ptype in ["solar", "wind", "hydro", "nuclear"]:
+            plant = getattr(self._sim, ptype)
+            if plant.available and ptype not in self._plants_built:
+                self._plants_built.append(ptype)
 
     def _build_end_schedule(
         self,
         start_schedule: Dict[int, List[str]],
     ) -> Dict[int, List[str]]:
-        """
-        Build a step → events_ending dict from the start schedule.
-
-        Each event ends at start_step + duration.
-        """
         end_schedule: Dict[int, List[str]] = {}
         for start_step, events in start_schedule.items():
             for event in events:
@@ -343,30 +607,22 @@ class EnergyGridEnvironment(Environment):
         self,
         reward: float,
         done: bool,
+        dispatch_reward: float = 0.0,
+        planning_reward: float = 0.0,
+        market_reward: float = 0.0,
     ) -> EnergyGridObservation:
-        """
-        Construct an EnergyGridObservation from current sim state.
-        """
         sim = self._sim
         if sim is None:
             return EnergyGridObservation(done=done, reward=reward)
 
-        # Compute hour from step counter (step % 24 gives the correct hour)
-        # This matches the hour used in compute_demand within simulator_step
         hour = sim.step % 24
         result = self._last_step_result
 
-        # Spinning reserve
         spinning_reserve = result.get(
             "spinning_reserve_mw",
             _compute_spinning_reserve(sim),
         )
-        spinning_reserve_required = result.get(
-            "spinning_reserve_required_mw",
-            sim.demand_mw * SPINNING_RESERVE_RATIO,
-        )
 
-        # Construction queue for observation
         construction_list = [
             {
                 "type": entry.plant_type,
@@ -377,66 +633,64 @@ class EnergyGridEnvironment(Environment):
         ]
 
         obs = EnergyGridObservation(
-            # Demand & time (optimized field names)
             demand_mw=round(sim.demand_mw, 2),
             hour=hour,
             day=sim.day,
             step=sim.step,
             season=sim.season,
 
-            # Coal (consolidated: removed _output_mw suffix, removed startup_steps_remaining)
             coal_mw=round(sim.coal.output_mw, 2),
             coal_online=sim.coal.online,
             coal_max_mw=round(sim.coal.max_mw, 2),
             coal_startup_remaining=sim.coal.startup_steps_remaining,
             coal_price=round(sim.coal_price, 3),
 
-            # Solar (consolidated: removed _output_mw, _available, renamed to coal_mw pattern)
             solar_mw=round(sim.solar.output_mw, 2),
             solar_weather=result.get("solar_weather", sim.solar_weather),
 
-            # Wind (consolidated)
             wind_mw=round(sim.wind.output_mw, 2),
             wind_speed_ms=round(sim.wind.wind_speed_ms, 2),
 
-            # Hydro (consolidated: renamed reservoir_level→reservoir_mwh)
             hydro_mw=round(sim.hydro.output_mw, 2),
             reservoir_mwh=round(sim.hydro.reservoir_mwh, 2),
             reservoir_capacity_mwh=HYDRO_RESERVOIR_CAP_MWH,
 
-            # Nuclear (consolidated)
             nuclear_mw=round(sim.nuclear.output_mw, 2),
             nuclear_online=sim.nuclear.online,
             nuclear_trip_remaining=sim.nuclear.trip_steps_remaining,
 
-            # Battery (consolidated: battery_level→battery_mwh)
             battery_mwh=round(sim.battery.level_mwh, 2),
             battery_capacity_mwh=round(sim.battery.capacity_mwh, 2),
 
-            # Grid health (consolidated & removed redundant fields)
             unmet_demand_mw=round(result.get("unmet_demand_mw", 0.0), 2),
             frequency_hz=round(sim.frequency.frequency, 4),
             load_shedding_mw=round(result.get("load_shed_mw", 0.0), 2),
             blackout_risk=result.get("blackout_risk", "none"),
             spinning_reserve_mw=round(spinning_reserve, 2),
 
-            # Events & construction (renamed: plants_building→plants_building)
             active_events=list(sim.active_events),
             plants_building=construction_list,
 
-            # Economics (consolidated: removed cumulative_cost & feedin_credits from main fields)
             capital_budget=round(sim.capital_budget, 2),
             cumulative_cost=round(sim.cumulative_cost, 4),
             cumulative_emissions_tons=round(sim.cumulative_emissions, 2),
 
-            # Episode metadata
+            # Market agent fields
+            grid_export_mw=round(self._grid_export_mw, 2),
+            grid_import_mw=round(self._grid_import_mw, 2),
+            trading_credits=round(self._trading_credits, 4),
+
             done=done,
             reward=reward,
             episode_ended_early=sim.blackout_this_step,
             task_id=self._task_id,
+
+            # Per-agent reward breakdown
+            dispatch_reward=round(dispatch_reward, 4),
+            planning_reward=round(planning_reward, 4),
+            market_reward=round(market_reward, 4),
         )
 
-        # Apply normalization if enabled
         if self._normalize:
             obs_dict = obs.model_dump()
             normalized_dict = normalize_observation(obs_dict, self._task_id)
@@ -445,7 +699,6 @@ class EnergyGridEnvironment(Environment):
         return obs
 
     def _log_step(self, result: Dict[str, Any]) -> None:
-        """Append a StepLog entry for the current step."""
         if self._episode_log is None or self._sim is None:
             return
 
@@ -479,7 +732,6 @@ class EnergyGridEnvironment(Environment):
         self._episode_log.log_step(log_entry)
 
     def _finalise_episode(self) -> None:
-        """Finalise the episode log and compute the grade."""
         if self._episode_log is None or self._sim is None:
             return
 
@@ -495,3 +747,7 @@ class EnergyGridEnvironment(Environment):
         )
 
         self._last_grade = grade_episode(self._episode_log)
+
+    @property
+    def state(self) -> State:
+        return self._state
