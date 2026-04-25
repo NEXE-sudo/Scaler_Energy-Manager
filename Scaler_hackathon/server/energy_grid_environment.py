@@ -325,7 +325,7 @@ class EnergyGridEnvironment(Environment):
                 "spinning_reserve_mw",
                 "duck_curve_stress",
                 "voltage_stability_index",
-                "anomaly_score",  # ✅ ONLY dispatch sees this
+                "anomaly_score",
             ]
 
         elif agent_type == "market":
@@ -821,8 +821,6 @@ class EnergyGridEnvironment(Environment):
             blackout_risk=result.get("blackout_risk", "none"),
             spinning_reserve_mw=round(spinning_reserve, 2),
             spinning_reserve_required_mw=round(result.get("spinning_reserve_required_mw", 0.0), 2),
-
-            anomaly_score=result.get("anomaly_score", 0.0),
 
             active_events=list(sim.active_events),
             plants_building=construction_list,
