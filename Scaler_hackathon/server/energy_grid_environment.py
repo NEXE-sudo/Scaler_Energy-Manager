@@ -277,7 +277,7 @@ class EnergyGridEnvironment(Environment):
             battery_mode="idle",
             emergency_coal_boost=False,
             demand_response_mw=0,
-            plant_action=None,
+            plant_action="none",
             event_schedule=self._event_schedule,
             event_end_schedule=self._event_end_schedule,
             task_id=task_id,

@@ -422,6 +422,10 @@ class EnergyGridObservation(Observation):
     episode_ended_early: bool = Field(default=False)
     task_id: str = Field(default="easy")
 
+    # Unified reward (step reward)
+    reward: float = Field(default=0.0,
+        description="Step reward signal for single-agent backward compatibility.")
+
     # Agent-specific reward breakdown (new)
     dispatch_reward: float = Field(default=0.0,
         description="Reward component attributable to dispatch decisions.")

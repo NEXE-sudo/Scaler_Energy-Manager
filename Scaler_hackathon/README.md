@@ -88,6 +88,8 @@ This means replacing coal/nuclear with renewables reduces grid inertia
 and makes the same power imbalance cause faster frequency swings —
 the central challenge of modern grid decarbonisation.
 
+**Time Resolution:** 1 step = 1 hour (economic dispatch horizon). Sub-hourly automatic generation control (AGC) dynamics, intra-hour frequency response, and voltage control are abstracted into the frequency model to keep the environment tractable.
+
 ### Hydro Reservoir
 
 The hydro plant uses a realistic reservoir model:
@@ -1018,9 +1020,9 @@ energy-grid-openenv/
 
 | Task    | Score     | Steps | Reliability | Cost Efficiency | Status |
 | ------- | --------- | ----- | ----------- | --------------- | ------ |
-| Easy    | 0.150     | 24    | 16.67%      | 12.51%          | ❌     |
-| Medium  | 0.415     | 8/48  | 8.33%       | 88.39%          | ❌     |
-| Hard    | 0.329     | 72/72 | 19.44%      | 45.16%          | ❌     |
+| Easy    | 0.150     | 24    | 16.67%      | 12.51%          | FAIL   |
+| Medium  | 0.415     | 8/48  | 8.33%       | 88.39%          | FAIL   |
+| Hard    | 0.329     | 72/72 | 19.44%      | 45.16%          | FAIL   |
 | **Avg** | **0.298** |       |             |                 |        |
 
 ### Task-by-Task Analysis

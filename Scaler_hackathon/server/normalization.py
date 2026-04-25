@@ -182,9 +182,9 @@ def normalize_observation(
         )
     
     # ---- Hydro reservoir (MWh and %) ----
-    if "reservoir_level_mwh" in normalized:
-        normalized["reservoir_level_mwh"] = normalize_value(
-            normalized["reservoir_level_mwh"],
+    if "reservoir_mwh" in normalized:
+        normalized["reservoir_mwh"] = normalize_value(
+            normalized["reservoir_mwh"],
             bounds.MIN_RESERVOIR_MWH,
             bounds.MAX_RESERVOIR_MWH
         )
@@ -194,14 +194,6 @@ def normalize_observation(
             normalized["reservoir_capacity_mwh"],
             900.0,
             1100.0
-        )
-    
-    if "natural_inflow_mwh" in normalized:
-        # Natural inflow: typically [5, 50] MWh/step
-        normalized["natural_inflow_mwh"] = normalize_value(
-            normalized["natural_inflow_mwh"],
-            0.0,
-            100.0
         )
     
     # ---- Unmet demand (MW) ----

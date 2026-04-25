@@ -77,7 +77,7 @@ HYDRO_INERTIA_PER_100MW: float = 3.0  # seconds
 NUCLEAR_MIN_MW: float = 300.0       # minimum stable (cannot go below)
 NUCLEAR_MAX_MW: float = 500.0
 NUCLEAR_RAMP_MW: float = 10.0       # very slow
-NUCLEAR_STARTUP_STEPS: int = 8      # post-SCRAM restart
+NUCLEAR_STARTUP_STEPS: int = 12      # post-SCRAM restart
 NUCLEAR_FUEL_COST: float = 0.05     # units per MWh
 NUCLEAR_INERTIA_PER_100MW: float = 5.0  # seconds
 
@@ -100,6 +100,7 @@ FREQ_LOAD_SHED_2: float = 48.5            # Hz — second load shed
 FREQ_BLACKOUT_LOW: float = 47.5           # Hz — full blackout
 FREQ_BLACKOUT_HIGH: float = 51.5          # Hz — over-frequency blackout
 FREQ_ROCOF_TRIP: float = 1.0              # Hz/step — protection trip
+SYSTEM_BASE_MVA: float = 1000.0           # Fixed rated capacity for swing equation
 LOAD_SHED_1_MW: float = 100.0
 LOAD_SHED_2_MW: float = 200.0
 
@@ -265,6 +266,7 @@ class GridSimState:
     # Economics
     capital_budget: float = 0.0
     coal_price: float = 1.0
+    carbon_price: float = 45.0   # £/ton CO2, realistic UK ETS price
     cumulative_cost: float = 0.0
     cumulative_emissions: float = 0.0
     cumulative_feedin_credits: float = 0.0
@@ -677,9 +679,8 @@ def step_frequency(
         (blackout_triggered, load_shed_mw_this_step)
     """
     # Swing equation: df/dt = ΔP / (2H × S_base)
-    # We use demand_mw as a proxy for system size (S_base)
-    system_base = max(demand_mw, 200.0)
-    rocof = power_imbalance_mw / (2.0 * system_inertia * system_base / 100.0)
+    # Fixed S_base = 1000 MVA (industry standard)
+    rocof = power_imbalance_mw / (2.0 * system_inertia * SYSTEM_BASE_MVA / 100.0)
 
     # Clamp RoCoF to physically plausible range
     rocof = max(-3.0, min(3.0, rocof))
@@ -1050,7 +1051,8 @@ def compute_reward(
     coal_mwh = state.coal.output_mw * (1.0 / 1.0)   # 1 step = 1 MWh equivalent
     reward -= 0.003 * coal_mwh * state.coal_price
 
-    reward -= 0.001 * coal_mwh * COAL_EMISSION_FACTOR
+    # Dynamic carbon price signal (£/ton CO2, realistic ETS pricing)
+    reward -= (coal_mwh * COAL_EMISSION_FACTOR * state.carbon_price * 0.0001)
 
     if state.coal_flip_streak == 0 and unmet < 10:
         reward += 0.05
@@ -1126,12 +1128,17 @@ def update_coal_price(state: GridSimState, rng: random.Random) -> None:
     """
     Random-walk coal price within [0.8, 2.5].
     Only applied in Hard task; no-op otherwise.
+    Also updates carbon price via random walk (£/ton CO2).
     """
     if "price_spike" in state.active_events:
         return   # already set by event
 
     delta = rng.gauss(0, 0.05)
     state.coal_price = max(0.8, min(2.5, state.coal_price + delta))
+    
+    # Carbon price random walk (realistic market volatility)
+    carbon_delta = rng.gauss(0, 2.0)   # £2/ton std dev per step
+    state.carbon_price = max(20.0, min(100.0, state.carbon_price + carbon_delta))
 
 
 # ---------------------------------------------------------------------------
