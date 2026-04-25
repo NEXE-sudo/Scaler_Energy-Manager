@@ -11,6 +11,8 @@ import json
 import re
 from typing import Any, Dict, Optional
 
+from Scaler_hackathon.server.train import _dict_to_action
+
 # Action bounds (same as ppo_agent.py for consistency)
 ACTION_BOUNDS = {
     "coal_delta": (-100.0, 100.0),
@@ -90,78 +92,36 @@ def observation_to_text(obs: dict) -> str:
 Goal: Maintain 50Hz, avoid blackout.
 """
 
+import json
+import re
 
+def extract_action_from_llm_output(text: str):
+    if not text:
+        return SAFE_DEFAULT_ACTION
 
-def extract_action_from_llm_output(text: str) -> Dict[str, Any]:
-    """
-    Extract JSON action from LLM output containing both reasoning and action.
-    
-    Expected format:
-        Thought:
-        <reasoning>
-        
-        Action:
-        { ... JSON ... }
-    
-    Returns a dict with clipped values and safe defaults for invalid fields.
-    On parse failure, returns SAFE_DEFAULT_ACTION with a warning.
-    """
+    # Normalize text
+    text = text.strip()
 
-    if not text or not text.strip():
-        print("[WARN] extract_action_from_llm_output: empty response")
-        return SAFE_DEFAULT_ACTION.copy()
-    
-    # Find JSON block after "Action:" if present
-    action_match = re.search(r'(?:^|\n)\s*Action\s*:\s*({.*?})\s*(?:\n|$)', text, re.DOTALL | re.IGNORECASE)
-    
-    if action_match:
-        json_block = action_match.group(1)
-    else:
-        # Fallback: try to find any JSON object in the response
-        def extract_json(s: str) -> Optional[str]:
-            start = s.find('{')
-            if start == -1:
-                return None
-            depth = 0
-            for i, ch in enumerate(s[start:], start):
-                if ch == '{':
-                    depth += 1
-                elif ch == '}':
-                    depth -= 1
-                    if depth == 0:
-                        return s[start:i + 1]
-            return None
-        
-        json_block = extract_json(text)
-    
-    if not json_block:
-        print("[WARN] extract_action_from_llm_output: no JSON found")
-        return SAFE_DEFAULT_ACTION.copy()
-    
-    # Normalize JSON
-    json_block = json_block.replace("'", '"')  # Single quotes to double
-    json_block = re.sub(r',\s*([}\]])', r'\1', json_block)  # Trailing commas
-    json_block = re.sub(r'\btrue\b', 'true', json_block, flags=re.IGNORECASE)
-    json_block = re.sub(r'\bfalse\b', 'false', json_block, flags=re.IGNORECASE)
-    json_block = re.sub(r'\bTrue\b', 'true', json_block)
-    json_block = re.sub(r'\bFalse\b', 'false', json_block)
-    json_block = re.sub(r'\bNone\b', 'null', json_block)
-    
-    # Task: Fix missing commas between fields (e.g. "a": 1 "b": 2)
-    json_block = re.sub(r'("[\w]+"\s*:\s*[\d\.]+\s*)\n\s*("[\w]+"\s*:\s*)', r'\1,\n\2', json_block)
-    # Fix missing commas between string fields
-    json_block = re.sub(r'("[\w]+"\s*:\s*"[\w]+"\s*)\n\s*("[\w]+"\s*:\s*)', r'\1,\n\2', json_block)
-    
+    # Try to find JSON after "Action"
+    match = re.search(r"Action\s*:\s*(\{[\s\S]*?\})", text, re.IGNORECASE)
+
+    if not match:
+        # fallback: find ANY JSON block
+        match = re.search(r"(\{[\s\S]*?\})", text)
+
+    if not match:
+        print("[WARN] no JSON found")
+        return SAFE_DEFAULT_ACTION
+
+    json_str = match.group(1)
+
     try:
-        data = json.loads(json_block)
+        data = json.loads(json_str)
         return _dict_to_action(data)
-    except json.JSONDecodeError as e:
-        print(f"[WARN] extract_action_from_llm_output: JSON decode error: {e}")
-        return SAFE_DEFAULT_ACTION.copy()
     except Exception as e:
-        print(f"[WARN] extract_action_from_llm_output: unexpected error: {e}")
-        return SAFE_DEFAULT_ACTION.copy()
-
+        print("[WARN] JSON parse failed:", e)
+        print("BAD JSON:", json_str)
+        return SAFE_DEFAULT_ACTION
 
 def _dict_to_action(data: Dict[str, Any]) -> Dict[str, Any]:
     """

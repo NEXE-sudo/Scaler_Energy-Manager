@@ -140,11 +140,91 @@ FAST_MAX_TOKENS     = 150  # Quick, directive response for real-time control
 # Multi-Agent Role Prompts
 # ---------------------------------------------------------------------------
 
-AGENT_PROMPTS = {
-    "planning": "Planner. Goal: Long-term reliability. Output JSON with 'plant_action' (none, build_solar, build_wind, build_hydro, build_nuclear, close_coal).",
-    "dispatch": "Dispatch. Goal: 50Hz. Output JSON with 'coal_delta' (-100 to 100), 'hydro_delta' (-80 to 80), 'nuclear_delta' (-10 to 10), 'battery_mode' (charge, discharge, idle), 'emergency_coal_boost' (bool).",
-    "market": "Market. Goal: Efficiency. Output JSON with 'demand_response_mw' (0 to 150), 'grid_export_mw' (0 to 100), 'grid_import_mw' (0 to 100), 'coal_price_bid' (0.5 to 3.0)."
+def get_agent_prompt(agent_type: str) -> str:
+    if agent_type == "planning":
+        return """You are the Planning Agent.
+
+Your role:
+
+Make long-term infrastructure decisions
+Ensure reliability before future demand spikes
+
+CRITICAL RULES:
+
+Return ONLY valid JSON
+Do NOT add text outside the format
+
+FORMAT:
+
+Thought:
+<short reasoning>
+
+Action:
+{
+"plant_action": "none | build_solar | build_wind | build_hydro | build_nuclear | close_coal"
 }
+"""
+
+    elif agent_type == "dispatch":
+        return """You are the Dispatch Agent.
+
+Your role:
+
+Maintain grid frequency at 50 Hz
+Prevent blackouts
+Balance supply and demand
+
+CRITICAL RULES:
+
+Return ONLY valid JSON
+Include ALL fields
+Do NOT output all zeros unless necessary
+
+FORMAT:
+
+Thought:
+<short reasoning>
+
+Action:
+{
+"coal_delta": number,
+"hydro_delta": number,
+"nuclear_delta": number,
+"battery_mode": "charge | discharge | idle",
+"emergency_coal_boost": true | false
+}
+"""
+
+    elif agent_type == "market":
+        return """You are the Market Agent.
+
+Your role:
+
+Optimise cost and efficiency
+Use demand response and trading
+
+CRITICAL RULES:
+
+Return ONLY valid JSON
+Include ALL fields
+
+FORMAT:
+
+Thought:
+<short reasoning>
+
+Action:
+{
+"demand_response_mw": number,
+"grid_export_mw": number,
+"grid_import_mw": number,
+"coal_price_bid": number | null
+}
+"""
+
+    else:
+        return "Return valid JSON only."
+
 
 MAX_EVAL_STEPS = 20
 
@@ -161,13 +241,7 @@ def _build_system_prompt(
     """
 
     # Use role-specific prompt if provided, else use the unified base
-    role_prompt = AGENT_PROMPTS.get(agent_type, """You are an expert electricity grid operator.
-Your priorities:
-1. Prevent blackout
-2. Maintain frequency near 50 Hz
-3. Ensure sufficient reserve
-4. Optimise cost only when stable
-""")
+    role_prompt = get_agent_prompt(agent_type)
 
     base = f"""{role_prompt}
 
@@ -486,6 +560,8 @@ def run_task(
         final_d = rev_d if task_id != "easy" else prop_d
         final_m = rev_m if task_id != "easy" else prop_m
 
+        reward = obs.reward or 0.0
+
         history.append({
             "step": step_count + 1,
             "demand": float(obs.demand_mw),
@@ -523,7 +599,6 @@ def run_task(
 
         prev_obs = obs
         step_count += 1
-        reward = obs.reward or 0.0
         rewards_list.append(reward)
 
         # Detailed state logging
