@@ -316,4 +316,11 @@ class MultiAgentGridEnv:
             dispatch_reward=obs_data.get("dispatch_reward", 0.0),
             planning_reward=obs_data.get("planning_reward", 0.0),
             market_reward=obs_data.get("market_reward", 0.0),
+            # Phase 1 fields
+            coal_health_pct=obs_data.get("coal_health_pct", 100.0),
+            duck_curve_stress_mw_per_step=obs_data.get("duck_curve_stress_mw_per_step", 0.0),
+            spot_price=obs_data.get("spot_price", 1.0),
+            carbon_price_per_ton=obs_data.get("carbon_price_per_ton", 45.0),
+            rate_of_change_hz_per_step=obs_data.get("rate_of_change_hz_per_step", 0.0),
+            voltage_stability_index=obs_data.get("voltage_stability_index", 100.0),
         )

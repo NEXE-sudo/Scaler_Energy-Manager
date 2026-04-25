@@ -158,6 +158,8 @@ class DispatchAgentAction(Action):
             "Blocked after 5 uses per episode."
         ),
     )
+    
+    reroute_transmission: bool = False
 
     @field_validator("battery_mode")
     @classmethod
@@ -193,6 +195,10 @@ class MarketAgentAction(Action):
     have different incentives.
     """
 
+    scheduled_dr_mw: float = 0.0
+    scheduled_dr_start: int = 0
+    scheduled_dr_duration: int = 0
+    
     demand_response_mw: float = Field(
         default=0.0,
         ge=0.0,
@@ -241,10 +247,15 @@ class MarketAgentAction(Action):
         ),
     )
 
-    @field_validator("grid_export_mw", "grid_import_mw")
+    @field_validator("scheduled_dr_mw")
     @classmethod
-    def validate_trading(cls, v: float) -> float:
-        return max(0.0, min(100.0, v))
+    def validate_scheduled_dr(cls, v):
+        return max(0.0, min(150.0, v))
+
+    @field_validator("scheduled_dr_duration")
+    @classmethod
+    def validate_duration(cls, v):
+        return max(0, min(24, v))
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +299,12 @@ class EnergyGridAction(Action):
     demand_response_mw: float = Field(default=0.0, ge=0.0, le=150.0,
         description="Voluntary demand reduction (MW). Range: 0–150.")
 
+    # Phase 3 additions
+    reroute_transmission: bool = False
+    scheduled_dr_mw: float = 0.0
+    scheduled_dr_start: int = 0
+    scheduled_dr_duration: int = 0
+
     @field_validator("battery_mode")
     @classmethod
     def validate_battery_mode(cls, v: str) -> str:
@@ -325,8 +342,13 @@ class EnergyGridAction(Action):
 
     def to_market(self) -> MarketAgentAction:
         """Extract market fields as a MarketAgentAction."""
-        return MarketAgentAction(demand_response_mw=self.demand_response_mw)
-
+        return MarketAgentAction(
+        demand_response_mw=self.demand_response_mw,
+        scheduled_dr_mw=self.scheduled_dr_mw,
+        scheduled_dr_start=self.scheduled_dr_start,
+        scheduled_dr_duration=self.scheduled_dr_duration,
+        )
+        
     @classmethod
     def from_agents(
         cls,
@@ -369,6 +391,9 @@ class EnergyGridObservation(Observation):
     day: int = Field(default=1, ge=1)
     step: int = Field(default=0, ge=0)
     season: str = Field(default="spring")
+    industrial_demand_mw: float = 0.0
+    datacenter_demand_mw: float = 0.0
+    scheduled_dr_mw: float = 0.0
 
     # Generation
     coal_mw: float = Field(default=0.0)
@@ -400,10 +425,20 @@ class EnergyGridObservation(Observation):
     load_shedding_mw: float = Field(default=0.0)
     blackout_risk: str = Field(default="none")
     spinning_reserve_mw: float = Field(default=0.0)
+    spinning_reserve_required_mw: float = Field(default=0.0,
+        description="Required spinning reserve (MW) based on N-1 contingency criterion. Dynamic.")
+
+    duck_curve_stress: float = 0.0
+    voltage_stability_index: float = 100.0
+    spot_price: float = 1.0
+    anomaly_score: float = 0.0
 
     # Events & construction
     active_events: List[str] = Field(default_factory=list)
     plants_building: List[Dict[str, Any]] = Field(default_factory=list)
+    steps_until_projected_shortfall: int = 999
+    steps_until_shortfall: int = 999
+    fdi_active: bool = False
 
     # Economics
     capital_budget: float = Field(default=0.0)
@@ -433,6 +468,66 @@ class EnergyGridObservation(Observation):
         description="Reward component attributable to planning decisions.")
     market_reward: float = Field(default=0.0,
         description="Reward component attributable to market decisions.")
+
+    # Phase 1: New fields for feature parity
+    # -- Coal health (Feature 3)
+    coal_health_pct: float = Field(default=100.0, ge=0.0, le=100.0,
+        description="Coal plant health (0-100%). Degrades with usage and boost damage.")
+    
+    # -- Duck curve stress (Feature 5)
+    duck_curve_stress_mw_per_step: float = Field(default=0.0,
+        description="Rate of change of net load (demand - renewables), MW/step. "
+                    "Positive = increasing net load (ramp up). Negative = decreasing net load (ramp down).")
+    
+    # -- Spot price / LMP (Feature 8)
+    spot_price: float = Field(default=1.0,
+        description="Real-time electricity spot price (£/MWh equivalent). "
+                    "Rises during scarcity; reflects coal + carbon cost + demand premium.")
+    carbon_price_per_ton: float = Field(default=45.0,
+        description="Carbon price (£/ton CO2). Visible in Hard task; affects spot price.")
+    
+    # -- Frequency rate of change (Foundation for grid stability)
+    rate_of_change_hz_per_step: float = Field(default=0.0,
+        description="Rate of change of frequency (Hz/step). RoCoF signal.")
+    
+    # -- Voltage stability index (Feature 10)
+    voltage_stability_index: float = Field(default=100.0, ge=0.0, le=100.0,
+        description="Voltage stability proxy (0-100). Ratio of synchronous to total generation. "
+                    "100 = all synchronous (stable). 0 = all inverter-based (risky).")
+
+
+# ---------------------------------------------------------------------------
+# Filtered Observation Classes for Multi-Agent Architecture
+# ---------------------------------------------------------------------------
+
+class PlanningAgentObservation(EnergyGridObservation):
+    """
+    Observation filtered for Planning Agent.
+    
+    Sees long-run capital, construction state, cumulative metrics.
+    Hides real-time dispatch details (frequency, spinning reserve, etc.).
+    """
+    pass  # Inherits all fields; filtering applied at environment level
+
+
+class DispatchAgentObservation(EnergyGridObservation):
+    """
+    Observation filtered for Dispatch Agent.
+    
+    Sees real-time frequency, reserve, generation outputs, demand.
+    Hides capital budget, economic details beyond current cost.
+    """
+    pass  # Inherits all fields; filtering applied at environment level
+
+
+class MarketAgentObservation(EnergyGridObservation):
+    """
+    Observation filtered for Market Agent.
+    
+    Sees prices, costs, trading state, demand.
+    Hides detailed plant internals, capital budget details.
+    """
+    pass  # Inherits all fields; filtering applied at environment level
 
 
 # ---------------------------------------------------------------------------

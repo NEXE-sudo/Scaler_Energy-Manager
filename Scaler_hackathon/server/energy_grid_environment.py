@@ -52,6 +52,9 @@ except ImportError:
         PlanningAgentAction,
         DispatchAgentAction,
         MarketAgentAction,
+        PlanningAgentObservation,
+        DispatchAgentObservation,
+        MarketAgentObservation,
     )
 
 try:
@@ -67,8 +70,6 @@ try:
         simulator_step,
         EVENT_DURATIONS,
         HYDRO_RESERVOIR_CAP_MWH,
-        SPINNING_RESERVE_RATIO,
-        _compute_spinning_reserve,
     )
     from .tasks import get_task, TASK_ORDER
     from .grader import (
@@ -86,8 +87,6 @@ except ImportError:
         simulator_step,
         EVENT_DURATIONS,
         HYDRO_RESERVOIR_CAP_MWH,
-        SPINNING_RESERVE_RATIO,
-        _compute_spinning_reserve,
     )
     from server.tasks import get_task, TASK_ORDER
     from server.grader import (
@@ -171,6 +170,9 @@ class StepActionBuffer:
             planning=self.planning,
             market=self.market,
         )
+
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -290,10 +292,109 @@ class EnergyGridEnvironment(Environment):
         self._last_obs = obs
         return obs
 
+# ---------------------------------------------------------------------------
+# Observation Filtering (Asymmetric Information)
+# ---------------------------------------------------------------------------
+
+    def _filter_observation_for_agent(self, obs, agent_type: str):
+        data = obs.model_dump()
+
+        if agent_type == "planning":
+            allowed = [
+                "demand_mw",
+                "hour",
+                "day",
+                "season",
+                "coal_price",
+                "capital_budget",
+                "cumulative_cost",
+                "cumulative_emissions_tons",
+            ]
+
+        elif agent_type == "dispatch":
+            allowed = [
+                "demand_mw",
+                "coal_mw",
+                "solar_mw",
+                "wind_mw",
+                "hydro_mw",
+                "nuclear_mw",
+                "battery_mwh",
+                "frequency_hz",
+                "load_shedding_mw",
+                "spinning_reserve_mw",
+                "duck_curve_stress",
+                "voltage_stability_index",
+                "anomaly_score",  # ✅ ONLY dispatch sees this
+            ]
+
+        elif agent_type == "market":
+            allowed = [
+                "demand_mw",
+                "coal_price",
+                "spot_price",
+                "grid_export_mw",
+                "grid_import_mw",
+                "trading_credits",
+            ]
+
+        else:
+            return obs
+
+        filtered = {k: data[k] for k in allowed if k in data}
+
+        filtered_obs = type(obs)(**filtered)
+
+        # Apply FDI AFTER filtering
+        filtered_obs = self._apply_fdi(filtered_obs, agent_type)
+
+        return filtered_obs
+
+    def _apply_fdi(self, obs: EnergyGridObservation, agent_type: str) -> EnergyGridObservation:
+        """
+        Apply False Data Injection (FDI) attack to observation.
+
+        Only affects DISPATCH agent.
+        Does NOT affect underlying simulator physics.
+        """
+
+        # Only dispatch agent is affected
+        if agent_type != "dispatch":
+            return obs
+
+        # Only active during FDI event
+        if "fdi_attack" not in self._sim.active_events:
+            return obs
+
+        data = obs.model_dump()
+
+        rng = self._sim.rng
+
+        # Corrupt key signals
+        if "demand_mw" in data:
+            data["demand_mw"] *= rng.uniform(0.9, 1.1)
+
+        if "solar_mw" in data:
+            data["solar_mw"] *= rng.uniform(0.7, 1.3)
+
+        if "wind_mw" in data:
+            data["wind_mw"] *= rng.uniform(0.7, 1.3)
+
+        if "frequency_hz" in data:
+            data["frequency_hz"] += rng.uniform(-0.3, 0.3)
+
+        # Optional: noise on reserve signal
+        if "spinning_reserve_mw" in data:
+            data["spinning_reserve_mw"] *= rng.uniform(0.8, 1.2)
+
+        data["fdi_active"] = True
+
+        return type(obs)(**data)
+
     # ------------------------------------------------------------------
     # Single-agent step (backward compatible)
     # ------------------------------------------------------------------
-
+    
     def step(self, action: EnergyGridAction) -> EnergyGridObservation:
         """
         Single-agent step. Accepts unified EnergyGridAction and advances
@@ -360,7 +461,11 @@ class EnergyGridEnvironment(Environment):
             return self._advance_multi_agent_step()
 
         # Return current obs — step not yet complete
-        return self._last_obs or self._build_observation(reward=0.0, done=False)
+        obs = self._last_obs or self._build_observation(
+    reward=0.0,
+    done=False
+)
+        return self._filter_observation_for_agent(obs, "planning")
 
     def step_dispatch(
         self, action: DispatchAgentAction
@@ -379,7 +484,11 @@ class EnergyGridEnvironment(Environment):
         if self._action_buffer.is_complete:
             return self._advance_multi_agent_step()
 
-        return self._last_obs or self._build_observation(reward=0.0, done=False)
+        obs = self._last_obs or self._build_observation(
+    reward=0.0,
+    done=False
+)
+        return self._filter_observation_for_agent(obs, "dispatch")
 
     def step_market(
         self, action: MarketAgentAction
@@ -402,7 +511,11 @@ class EnergyGridEnvironment(Environment):
         if self._action_buffer.is_complete:
             return self._advance_multi_agent_step()
 
-        return self._last_obs or self._build_observation(reward=0.0, done=False)
+        obs = self._last_obs or self._build_observation(
+    reward=0.0,
+    done=False
+)
+        return self._filter_observation_for_agent(obs, "market")
 
     def _advance_multi_agent_step(self) -> EnergyGridObservation:
         """
@@ -504,20 +617,45 @@ class EnergyGridEnvironment(Environment):
         over = result.get("overproduction_mw", 0.0)
         load_shed = result.get("load_shed_mw", 0.0)
         freq_error = abs(sim.frequency.frequency - 50.0)
+        required_reserve = result.get("spinning_reserve_required_mw", 0.0)
+        actual_reserve = result.get("spinning_reserve_mw", 0.0)
+
         reserve_shortfall = max(
             0.0,
-            sim.demand_mw * SPINNING_RESERVE_RATIO - _compute_spinning_reserve(sim),
+            required_reserve - actual_reserve,
         )
 
         # Dispatch reward: reliability + frequency + reserve
-        dispatch_r = (
-            - 0.25 * unmet
-            - 0.30 * load_shed
-            - 0.20 * freq_error
-            + (0.2 if freq_error < 0.1 else 0.0)
-            - 0.05 * reserve_shortfall / max(1.0, sim.demand_mw)
-            - (3.0 if used_emergency_boost else 0.0)
-        )
+        dispatch_r = 0.0
+
+        # ---- Reliability (PRIMARY) ----
+        dispatch_r -= 0.30 * unmet
+        dispatch_r -= 0.25 * load_shed
+
+        # ---- Frequency stability ----
+        dispatch_r -= 0.25 * freq_error
+        if freq_error < 0.1:
+            dispatch_r += 0.25
+
+        # ---- Spinning reserve (IMPORTANT) ----
+        reserve_shortfall = max(0.0, required_reserve - actual_reserve)
+        dispatch_r -= 0.08 * reserve_shortfall / max(1.0, sim.demand_mw)
+
+        # ---- Voltage stability (STRONGER) ----
+        voltage_stability_index = result.get("voltage_stability_index", 100.0)
+
+        if voltage_stability_index < 50:
+            dispatch_r -= 0.4 * (50 - voltage_stability_index)
+        elif voltage_stability_index < 70:
+            dispatch_r -= 0.1 * (70 - voltage_stability_index)
+
+        # ---- Duck curve smoothness ----
+        duck_curve_stress = result.get("duck_curve_stress", 0.0)
+        dispatch_r -= 0.004 * abs(duck_curve_stress)
+
+        # ---- Emergency usage ----
+        if used_emergency_boost:
+            dispatch_r -= 3.0
 
         # Planning reward: emissions + renewable bonus
         wind_out = sim.wind.output_mw if sim.wind.available else 0.0
@@ -534,11 +672,27 @@ class EnergyGridEnvironment(Environment):
         )
 
         # Market reward: cost + trading
-        market_r = (
-            - 0.003 * coal_mw * sim.coal_price
-            - 0.001 * over
-            + trading_delta * 0.01      # normalised trading profit
-        )
+        market_r = 0.0
+
+        # ---- Coal cost ----
+        coal_mw = sim.coal.output_mw
+        market_r -= 0.004 * coal_mw * sim.coal_price
+
+        # ---- Overproduction ----
+        market_r -= 0.002 * over
+
+        # ---- Demand response ----
+        dr = result.get("demand_response_mw", 0.0)
+        market_r -= 0.01 * dr
+
+        # ---- Trading (already good) ----
+        market_r += trading_delta
+
+        # ---- Dynamic feed-in (FIXED) ----
+        spot_price = result.get("spot_price", 1.0)
+        feedin_mw = result.get("grid_export_mw", 0.0)
+
+        market_r += 0.05 * feedin_mw * spot_price
 
         return dispatch_r, planning_r, market_r
 
@@ -618,10 +772,9 @@ class EnergyGridEnvironment(Environment):
         hour = sim.step % 24
         result = self._last_step_result
 
-        spinning_reserve = result.get(
-            "spinning_reserve_mw",
-            _compute_spinning_reserve(sim),
-        )
+        spinning_reserve = result.get("spinning_reserve_mw", 0.0)
+        voltage_index = result.get("voltage_stability_index", 100.0)
+        anomaly_score = result.get("anomaly_score", 0.0)
 
         construction_list = [
             {
@@ -667,9 +820,14 @@ class EnergyGridEnvironment(Environment):
             load_shedding_mw=round(result.get("load_shed_mw", 0.0), 2),
             blackout_risk=result.get("blackout_risk", "none"),
             spinning_reserve_mw=round(spinning_reserve, 2),
+            spinning_reserve_required_mw=round(result.get("spinning_reserve_required_mw", 0.0), 2),
+
+            anomaly_score=result.get("anomaly_score", 0.0),
 
             active_events=list(sim.active_events),
             plants_building=construction_list,
+            steps_until_shortfall=result.get("steps_until_shortfall", 999),
+            fdi_active="fdi_attack" in self._sim.active_events,
 
             capital_budget=round(sim.capital_budget, 2),
             cumulative_cost=round(sim.cumulative_cost, 4),
@@ -689,7 +847,22 @@ class EnergyGridEnvironment(Environment):
             dispatch_reward=round(dispatch_reward, 4),
             planning_reward=round(planning_reward, 4),
             market_reward=round(market_reward, 4),
+            
+            # Phase 1: New fields
+            coal_health_pct=round(sim.coal.health_pct, 1),
+            duck_curve_stress_mw_per_step=round(result.get("duck_curve_stress_mw_per_step", 0.0), 2),
+            spot_price=round(result.get("spot_price", 1.0), 3),
+            carbon_price_per_ton=round(result.get("carbon_price_per_ton", 45.0), 2),
+            rate_of_change_hz_per_step=round(result.get("rate_of_change_hz_per_step", 0.0), 4),
+            duck_curve_stress=result.get("duck_curve_stress", 0.0),
+            voltage_stability_index=result.get("voltage_stability_index", 100.0),
+            spot_price=result.get("spot_price", 1.0),
+            anomaly_score=result.get("anomaly_score", 0.0),
         )
+
+        # Apply per-agent corruption
+        if "fdi_attack" in self._sim.active_events:
+            obs = self._apply_fdi(obs, agent_type)
 
         if self._normalize:
             obs_dict = obs.model_dump()

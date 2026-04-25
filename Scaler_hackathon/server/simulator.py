@@ -111,9 +111,6 @@ TRANSMISSION_FAULT_REDUCTION: float = 0.20  # 20% capacity loss during fault
 # Demand response
 DR_COST_PER_MW: float = 0.5   # capital units per MW shed
 
-# Spinning reserve
-SPINNING_RESERVE_RATIO: float = 0.20   # 20% of demand required
-
 # Seasonal demand multipliers
 SEASON_MULTIPLIERS: Dict[str, float] = {
     "spring": 1.00,
@@ -176,6 +173,8 @@ class CoalState:
     max_mw: float = COAL_MAX_MW
     boost_damage_steps: int = 0       # steps of reduced max remaining
     available: bool = True            # False after close_coal action
+    health_pct: float = 100.0          # Health metric (0-100%). Feature 3
+    cumulative_runtime_hours: float = 0.0  # Track total usage for health degradation
 
 
 @dataclass
@@ -183,6 +182,7 @@ class SolarState:
     output_mw: float = 0.0
     available: bool = False
     degradation_factor: float = 1.0   # 1.0 = new panels
+    clearness_index: float = 0.8      # Continuous stochastic variation. Feature 13
 
 
 @dataclass
@@ -244,6 +244,8 @@ class GridSimState:
     nuclear: NuclearState = field(default_factory=NuclearState)
     battery: BatteryState = field(default_factory=BatteryState)
     frequency: FrequencyState = field(default_factory=FrequencyState)
+    scheduled_dr_queue: List[Tuple[int, float]] = field(default_factory=list)
+    last_reroute: bool = False
 
     # Time
     step: int = 0
@@ -252,10 +254,14 @@ class GridSimState:
 
     # Grid
     demand_mw: float = 500.0
+    baseline_demand_mw: float = 0.0
+    industrial_demand_mw: float = 0.0
+    datacenter_demand_mw: float = 0.0
     transmission_capacity_mw: float = TRANSMISSION_NOMINAL_MW
     solar_weather: str = "clear"
     prev_coal_delta: Optional[float] = None
     coal_flip_streak: int = 0
+    prev_net_load_mw: float = 0.0     # For duck curve stress. Feature 5
 
     # Events
     active_events: List[str] = field(default_factory=list)
@@ -291,6 +297,127 @@ class GridSimState:
 
 
 # ---------------------------------------------------------------------------
+# Phase 1 Computation Functions (Features 2, 8, 10)
+# ---------------------------------------------------------------------------
+
+def compute_duck_curve_stress(state: GridSimState) -> float:
+    """
+    Duck curve stress = change in net load between steps.
+
+    net_load = demand - renewable generation (solar + wind)
+
+    Positive → ramp up required (evening peak)
+    Negative → ramp down (solar surge)
+    """
+
+    renewable_gen = 0.0
+
+    if state.solar.available:
+        renewable_gen += state.solar.output_mw
+
+    if state.wind.available:
+        renewable_gen += state.wind.output_mw
+
+    net_load = state.demand_mw - renewable_gen
+
+    # Compute delta vs previous step
+    stress = net_load - state.prev_net_load_mw
+
+    # Update state for next step
+    state.prev_net_load_mw = net_load
+
+    return stress
+
+def compute_required_spinning_reserve(state: 'GridSimState') -> float:
+    """
+    Dynamic N-1 spinning reserve requirement (Feature 2).
+    
+    Reserve scales with largest single infeed (contingency criterion).
+    - If nuclear available and online: 80% of nuclear capacity
+    - Else if coal available and online: 80% of coal capacity (or damaged max)
+    - Else if hydro available: 50% of hydro output
+    - Minimum floor: 15% of current demand
+    """
+    # Check nuclear first (most inertia)
+    if state.nuclear.available and state.nuclear.online:
+        contingency_mw = NUCLEAR_MAX_MW * 0.8
+    # Check coal (largest conventional plant)
+    elif state.coal.available and state.coal.online:
+        contingency_mw = state.coal.max_mw * 0.8  # respects boost damage
+    # Check hydro (fallback)
+    elif state.hydro.available and state.hydro.output_mw > 0:
+        contingency_mw = state.hydro.output_mw * 0.5
+    else:
+        contingency_mw = 0.0
+    
+    # Floor: never drop below 15% of demand (ensures minimum responsiveness)
+    min_reserve = state.demand_mw * 0.15
+    return max(min_reserve, contingency_mw)
+
+def compute_spot_price(state, coal_price, carbon_price, task_id, actual_reserve, required_reserve) -> float:
+    """
+    Spot price driven purely by reserve scarcity (clean + consistent).
+
+    Uses N-1 reserve ratio instead of naive supply/demand.
+    """
+
+    # Edge case: no demand
+    if state.demand_mw < 1.0:
+        return coal_price
+
+    # ── Reserve-based scarcity ───────────────────────────────
+    reserve_ratio = actual_reserve / max(required_reserve, 1.0)
+
+    # ── Pricing curve ────────────────────────────────────────
+    if reserve_ratio < 0.5:
+        scarcity_mult = 3.0
+    elif reserve_ratio < 1.0:
+        scarcity_mult = 2.0 + (1.0 - reserve_ratio)
+    elif reserve_ratio < 1.5:
+        scarcity_mult = 1.2
+    else:
+        scarcity_mult = 1.0
+
+    spot = coal_price * scarcity_mult
+
+    # Carbon pricing (hard mode)
+    if task_id == "hard" and carbon_price > 0:
+        spot *= (1.0 + carbon_price / 100.0)
+
+    return min(6.0, spot)
+
+def compute_voltage_stability_index(
+    coal_state: CoalState,
+    hydro_state: HydroState,
+    nuclear_state: NuclearState,
+    solar_output: float,
+    wind_output: float,
+) -> float:
+    """
+    Voltage stability proxy (Feature 10).
+    
+    Ratio of synchronous to total generation.
+    100 = all synchronous (stable). 0 = all inverter-based (risky).
+    Real grids need >50% synchronous during high renewables.
+    """
+    sync_gen = 0.0
+    if coal_state.online and coal_state.available:
+        sync_gen += coal_state.output_mw
+    if hydro_state.available and hydro_state.output_mw > 0:
+        sync_gen += hydro_state.output_mw
+    if nuclear_state.available and nuclear_state.online:
+        sync_gen += nuclear_state.output_mw
+    
+    inverter_gen = solar_output + wind_output
+    total_gen = sync_gen + inverter_gen
+    
+    if total_gen < 1.0:
+        return 100.0  # edge case: no generation
+    
+    ratio = sync_gen / total_gen
+    return ratio * 100.0
+
+# ---------------------------------------------------------------------------
 # Demand simulation
 # ---------------------------------------------------------------------------
 
@@ -300,17 +427,16 @@ def compute_demand(
     active_events: List[str],
     rng: random.Random,
     noise_std: float = 20.0,
-) -> float:
+) -> Tuple[float, float, float]:
     """
     Compute grid demand for the given hour.
 
     Base curve × seasonal multiplier + stochastic noise + event modifiers.
     """
-    base = BASE_DEMAND_CURVE[hour % 24]
+    base = BASE_DEMAND_CURVE[hour]
     seasonal = SEASON_MULTIPLIERS.get(season, 1.0)
-    noise = rng.gauss(0, noise_std)
 
-    demand = base * seasonal + noise
+    demand = base * seasonal
 
     # Event modifiers
     for event in active_events:
@@ -319,12 +445,88 @@ def compute_demand(
         elif event == "cold_snap":
             demand *= 1.20
 
-    return max(200.0, demand)   # floor: grid never fully idles
+     # Noise
+    demand += rng.gauss(0, 20.0)
 
+    demand = max(200.0, demand)
+
+    baseline = demand * 0.6
+    industrial = demand * 0.3
+    datacenter = demand * 0.1
+
+    return baseline, industrial, datacenter
+
+def compute_anomaly_score(state, event_schedule, current_step, rng):
+    """
+    Noisy pre-warning signal for upcoming events (Feature 12).
+
+    Rises 3–5 steps before an event.
+    Non-deterministic due to noise.
+    """
+
+    score = 0.0
+
+    for step, events in event_schedule.items():
+        delta = step - current_step
+
+        # Only look ahead up to 5 steps
+        if 0 < delta <= 5:
+            # closer event → higher signal
+            score += (6 - delta) * 0.15
+
+    # Add noise so agent cannot perfectly predict
+    noise = rng.gauss(0, 0.05)
+
+    return max(0.0, min(0.8, score + noise))
+
+def compute_shortfall_projection(state: GridSimState) -> int:
+    """
+    Estimate steps until supply deficit under worst-case conditions.
+    """
+
+    supply = (
+        state.coal.output_mw +
+        state.solar.output_mw +
+        state.wind.output_mw +
+        state.hydro.output_mw +
+        state.nuclear.output_mw
+    )
+
+    demand = state.demand_mw
+
+    if supply >= demand:
+        return 999
+
+    deficit_ratio = (demand - supply) / max(demand, 1.0)
+
+    if deficit_ratio > 0.3:
+        return 1
+    elif deficit_ratio > 0.2:
+        return 2
+    elif deficit_ratio > 0.1:
+        return 3
+    else:
+        return 5
 
 # ---------------------------------------------------------------------------
 # Solar irradiance
 # ---------------------------------------------------------------------------
+
+def step_solar_clearness(solar_state, rng):
+    """
+    AR(1)-style stochastic solar variability (Feature 13)
+    """
+
+    alpha = 0.92
+    noise = rng.gauss(0, 0.08)
+
+    solar_state.clearness_index = (
+        alpha * solar_state.clearness_index +
+        (1 - alpha) * 0.8 +
+        noise
+    )
+
+    solar_state.clearness_index = max(0.3, min(1.0, solar_state.clearness_index))
 
 def compute_solar_output(
     hour: int,
@@ -354,7 +556,8 @@ def compute_solar_output(
     }
     weather_mult = weather_multipliers.get(solar_weather, 1.0)
 
-    output = SOLAR_MAX_MW * irradiance * weather_mult * solar_state.degradation_factor
+    # Continuous clearness index noise superimposed on weather (Feature 13)
+    output = SOLAR_MAX_MW * irradiance * weather_mult * solar_state.clearness_index * solar_state.degradation_factor
     return max(0.0, output)
 
 
@@ -482,6 +685,19 @@ def step_coal(
         coal_state.boost_damage_steps -= 1
         if coal_state.boost_damage_steps == 0:
             coal_state.max_mw = COAL_MAX_MW   # restore after damage period
+
+    # Update health based on usage and damage (Feature 3)
+    if coal_state.online and coal_state.output_mw > COAL_MIN_MW:
+        # Degrade by ~0.5% per step at full load; scales with output level
+        usage_factor = coal_state.output_mw / COAL_MAX_MW  # 0 to 1
+        health_degradation = usage_factor * 0.005  # 0.5% per step at 100% load
+        coal_state.health_pct = max(0.0, coal_state.health_pct - health_degradation)
+        coal_state.cumulative_runtime_hours += 1.0 / 60.0
+    
+    # Boost damage also reduces health
+    if coal_state.boost_damage_steps > 0:
+        health_penalty = 0.02 * (COAL_BOOST_DAMAGE_STEPS - coal_state.boost_damage_steps + 1)
+        coal_state.health_pct = max(0.0, coal_state.health_pct - health_penalty)
 
     # Handle startup sequence
     if not coal_state.online:
@@ -785,6 +1001,9 @@ def schedule_events(
         # Rainfall (positive event — refills reservoir) — only in hard task where hydro is available
         if rng.random() < 0.5:
             add_event(rng.randint(0, total_steps - 1), "rainfall")
+            
+    if task_id == "hard" and rng.random() < 0.3:
+        add_event(rng.randint(5, total_steps - 5), "fdi_attack")
 
     if task_id == "hard":
         # Coal outage: base range 20-35 with per-episode variance to prevent memorization
@@ -809,10 +1028,6 @@ def schedule_events(
         if rng.random() < 0.5:
             add_event(rng.randint(5, 20), "drought")
 
-        # Grid fault (transmission capacity reduction)
-        if rng.random() < 0.4:
-            add_event(rng.randint(15, 40), "grid_fault")
-
     return schedule
 
 
@@ -830,6 +1045,7 @@ EVENT_DURATIONS: Dict[str, int] = {
     "nuclear_trip": 1,    # trigger only; restart handled by nuclear state
     "price_spike": 5,
     "grid_fault": 3,
+    "fdi_attack": 4,
 }
 
 
@@ -993,6 +1209,12 @@ def compute_reward(
     feedin_mw: float = 0.0,
     demand_response_mw: float = 0.0,
     emergency_coal_boost: bool = False,
+    duck_curve_stress: float = 0.0,
+    actual_reserve: float = 0.0,
+    required_reserve: float = 0.0,
+    voltage_stability_index: float = 100.0,
+    scheduled_dr: float = 0.0,          # ✅ NEW
+    spot_price: float = 1.0
 ) -> float:
     """
     Compute step reward.
@@ -1023,13 +1245,20 @@ def compute_reward(
 
     # ---- Reliability ----
     reward -= 0.25 * unmet          # prioritise reliability
-    reward -= 0.001 * over          # reduce oversupply penalty
-    reward -= 0.30 * load_shed_mw   # penalty for load shedding (prevent exploit)
+    reward -= 0.002 * over          # reduce oversupply penalty
+    reward -= 0.40 * load_shed_mw   # penalty for load shedding (prevent exploit)
+    # ---- Demand response costs ----
+    reward -= 0.01 * demand_response_mw
+    reward -= 0.004 * scheduled_dr
+
+    # ---- Rerouting penalty ----
+    if state.last_reroute:
+        reward -= 2.0
 
     # ---- Frequency stability ----
-    reward -= 0.2 * freq_error      # reduce frequency dominance
+    reward -= 0.25 * freq_error      # reduce frequency dominance
     if freq_error < 0.1:
-        reward += 0.2   # bonus for very stable frequency
+        reward += 0.25   # bonus for very stable frequency
 
     if demand_response_mw > 0 and task_id != "hard":
         reward -= 0.20 * demand_response_mw  # strong penalty to prevent DR spam
@@ -1049,10 +1278,10 @@ def compute_reward(
 
     # ---- Generation costs ----
     coal_mwh = state.coal.output_mw * (1.0 / 1.0)   # 1 step = 1 MWh equivalent
-    reward -= 0.003 * coal_mwh * state.coal_price
+    reward -= 0.004 * coal_mwh * state.coal_price
 
     # Dynamic carbon price signal (£/ton CO2, realistic ETS pricing)
-    reward -= (coal_mwh * COAL_EMISSION_FACTOR * state.carbon_price * 0.0001)
+    reward -= (coal_mwh * COAL_EMISSION_FACTOR * state.carbon_price * 0.00012)
 
     if state.coal_flip_streak == 0 and unmet < 10:
         reward += 0.05
@@ -1067,13 +1296,23 @@ def compute_reward(
     solar_output = state.solar.output_mw if state.solar.available else 0.0
     hydro_output = state.hydro.output_mw if state.hydro.available else 0.0
     
-    renewable_bonus = 0.015 * wind_output + 0.020 * solar_output + 0.010 * hydro_output
+    renewable_bonus = 0.02 * wind_output + 0.025 * solar_output + 0.015 * hydro_output
     renewable_bonus = min(0.30, renewable_bonus)  # Cap bonus to prevent stacking exploit
     reward += renewable_bonus
     
     # ---- Prosumer feed-in credit ----
     if feedin_mw > 0:
-        reward += 0.002 * feedin_mw
+        reserve_ratio = actual_reserve / max(required_reserve, 1.0)
+
+        if reserve_ratio < 0.8:
+            feedin_rate = 0.08
+        elif reserve_ratio < 1.2:
+            feedin_rate = 0.05
+        else:
+            feedin_rate = 0.02
+
+        feedin_value = feedin_mw * feedin_rate * spot_price
+        reward += feedin_value
 
     # ---- Hydro management ----
     if spillage_occurred:
@@ -1090,9 +1329,22 @@ def compute_reward(
     # ---- Spinning reserve shortfall ----
     reserve_shortfall = max(
         0.0,
-        demand_mw * SPINNING_RESERVE_RATIO - _compute_spinning_reserve(state),
+        required_reserve - actual_reserve,
     )
-    reward -= 0.05 * reserve_shortfall / max(1.0, demand_mw)  # normalised
+
+    reward -= 0.05 * reserve_shortfall / max(1.0, demand_mw)
+
+    # ---- Duck curve ramp stress penalty (Feature 5) ----
+    reward -= 0.004 * abs(duck_curve_stress)
+
+    # ---- Voltage stability penalty (NEW - Phase 1 completion) ----
+    voltage_index = voltage_stability_index
+
+    # Soft penalty below safe threshold (~50%)
+    if voltage_index < 50:
+        reward -= 0.4 * (50 - voltage_index)
+    elif voltage_index < 70:
+        reward -= 0.1 * (70 - voltage_index)
 
     # ---- Oscillation penalty ----
     # Penalise repeatedly hitting max or min ramp — signals instability
@@ -1183,6 +1435,17 @@ def simulator_step(
 
     Returns a dict of all values needed to build the observation.
     """
+        
+    PRIORITY = {
+        "grid_fault": 3,
+        "nuclear_trip": 3,
+        "coal_outage": 2,
+        "fdi_attack": 2,
+    }
+
+    state.active_events.sort(key=lambda e: PRIORITY.get(e, 1), reverse=True)
+
+    state.active_events = state.active_events[:3]
 
     # 1. End expired events
     for event in event_end_schedule.get(state.step, []):
@@ -1204,14 +1467,67 @@ def simulator_step(
 
     # 5. Demand
     hour = state.step % 24
-    demand = compute_demand(hour, state.season, state.active_events, state.rng)
-    state.demand_mw = demand
+    b, i, d = compute_demand(
+        hour,
+        state.season,
+        state.active_events,
+        state.rng
+    )
+
+    state.baseline_demand_mw = b
+    state.industrial_demand_mw = i
+    state.datacenter_demand_mw = d
+
+    state.demand_mw = b + i + d
+    
+    # ---- Demand Response (FIXED + WORKING) ----
+
+    # Immediate DR comes from function input
+    instant_dr = max(0.0, demand_response_mw)
+
+    # Scheduled DR inputs (optional, if you later add them properly)
+    scheduled_dr_mw = getattr(state, "scheduled_dr_mw_input", 0.0)
+    scheduled_start = getattr(state, "scheduled_dr_start_input", 0)
+    scheduled_duration = getattr(state, "scheduled_dr_duration_input", 0)
+
+    # Enqueue scheduled DR (only once per trigger)
+    if scheduled_dr_mw > 0 and getattr(state, "_dr_scheduled_flag", False) is False:
+        for t in range(scheduled_duration):
+            state.scheduled_dr_queue.append(
+                (state.step + scheduled_start + t, scheduled_dr_mw)
+            )
+        state._dr_scheduled_flag = True
+
+    # Reset flag when no new DR requested
+    if scheduled_dr_mw == 0:
+        state._dr_scheduled_flag = False
+
+    # Active scheduled DR this step
+    scheduled_dr = sum(mw for step, mw in state.scheduled_dr_queue if step == state.step)
+
+    # Clean expired entries
+    state.scheduled_dr_queue = [
+        (s, mw) for s, mw in state.scheduled_dr_queue if s > state.step
+    ]
+
+    # Total DR applied (cap)
+    total_dr = min(instant_dr + scheduled_dr, 150.0)
+
+    # Track cumulative DR (IMPORTANT for reward)
+    state.total_demand_response += total_dr
+
+    # Effective demand
+    effective_demand = max(0.0, state.demand_mw - total_dr)
 
     # 6. Wind speed update
     step_wind_speed(state.wind, state.rng)
 
     # 7. Passive generation (weather-driven, no agent control)
     state.solar_weather = derive_solar_weather(state.active_events)
+    
+    # Update solar clearness index for continuous noise (Feature 13)
+    step_solar_clearness(state.solar, state.rng)
+    
     solar_out = compute_solar_output(hour, state.solar, state.solar_weather)
     state.solar.output_mw = solar_out
     wind_out = compute_wind_output(state.wind)
@@ -1274,23 +1590,6 @@ def simulator_step(
     hydro_out, spillage_occurred = step_hydro(state.hydro, target_hydro, state.active_events, state.rng)
     state.hydro.output_mw = hydro_out
 
-    # 11. Demand response (reduces effective demand)
-    dr_mw = min(demand_response_mw, 150.0, state.demand_mw * 0.30)
-
-    # Enforce capital cost for DR in ALL tasks (not just hard)
-    # Capital budget is shared across all demands and responses
-    max_affordable_dr = int(state.capital_budget / DR_COST_PER_MW) * DR_COST_PER_MW
-    dr_mw = min(dr_mw, max_affordable_dr)
-
-    # Apply reduction
-    effective_demand = state.demand_mw - dr_mw
-
-    # Track cumulative usage (only once, after capital affordability check)
-    state.total_demand_response += dr_mw
-
-    # Deduct capital cost in ALL TASKS (exploit fix: previously only in hard)
-    state.capital_budget -= dr_mw * DR_COST_PER_MW
-
     # 12. Battery
     passive_supply = solar_out + wind_out + coal_out + hydro_out + nuclear_out
     shortfall = max(0.0, effective_demand - passive_supply)
@@ -1308,11 +1607,30 @@ def simulator_step(
     total_supply = passive_supply + battery_discharged - battery_charged + feedin_mw
     power_imbalance = total_supply - effective_demand
 
+    # ---- Transmission capacity (with rerouting) ----
+    state.last_reroute = False
+
+    if "grid_fault" in state.active_events:
+        if getattr(state, "reroute_transmission_flag", False):
+            state.transmission_capacity_mw = 1080
+            state.last_reroute = True
+        else:
+            state.transmission_capacity_mw = 960
+    else:
+        state.transmission_capacity_mw = 1200
+
     # 14. Transmission capacity constraint
     if total_supply > state.transmission_capacity_mw:
         # Curtail overproduction at transmission limit
         total_supply = state.transmission_capacity_mw
         power_imbalance = total_supply - effective_demand
+
+    anomaly_score = min(compute_anomaly_score(
+        state,
+        event_schedule,
+        state.step,
+        state.rng
+    ), 0.8)
 
     # 15. Frequency dynamics
     system_inertia = compute_system_inertia(state.coal, state.hydro, state.nuclear)
@@ -1329,6 +1647,14 @@ def simulator_step(
     if final_unmet < 1.0:   # within 1 MW tolerance
         state.steps_demand_met += 1
 
+    duck_curve_stress = compute_duck_curve_stress(state)
+
+    # Voltage stability index (Feature 10)
+    voltage_stability_idx = compute_voltage_stability_index(state.coal, state.hydro, state.nuclear, solar_out, wind_out)
+    
+    required_reserve = compute_required_spinning_reserve(state)
+    actual_reserve = _compute_spinning_reserve(state)
+
     # 17. Reward
     reward = compute_reward(
         state=state,
@@ -1341,8 +1667,13 @@ def simulator_step(
         spillage_occurred=spillage_occurred,
         task_id=task_id,
         feedin_mw=feedin_mw,
-        demand_response_mw=dr_mw,
+        demand_response_mw=instant_dr,
+        scheduled_dr=scheduled_dr,
         emergency_coal_boost=emergency_coal_boost,
+        duck_curve_stress=duck_curve_stress,
+        voltage_stability_index=voltage_stability_idx,
+        actual_reserve=actual_reserve,
+        required_reserve=required_reserve 
     )
 
     # 18. Economics & emissions
@@ -1369,10 +1700,28 @@ def simulator_step(
             )
 
     done = state.episode_ended or (state.step >= state.total_steps)
+    
+    # ── Spinning reserve outputs (Feature 2) ─────────────────────────
 
-    # Spinning reserve for observation
-    spinning_reserve = _compute_spinning_reserve(state)
-    spinning_reserve_required = effective_demand * SPINNING_RESERVE_RATIO
+    # Temporarily override demand for correct reserve calculation
+    original_demand = state.demand_mw
+    state.demand_mw = effective_demand
+    
+    state.demand_mw = original_demand
+
+    spot_price = compute_spot_price(
+        state,
+        state.coal_price,
+        state.carbon_price,
+        task_id,
+        actual_reserve,
+        required_reserve,
+    )
+    
+    # Rate of change of frequency (for grid stability metrics)
+    rate_of_change_hz = state.frequency.rocof
+    
+    shortfall_steps = compute_shortfall_projection(state)
 
     return {
         "reward": reward,
@@ -1383,12 +1732,23 @@ def simulator_step(
         "overproduction_mw": max(0.0, total_supply - effective_demand),
         "total_supply_mw": total_supply,
         "system_inertia": system_inertia,
-        "spinning_reserve_mw": spinning_reserve,
-        "spinning_reserve_required_mw": spinning_reserve_required,
         "blackout_risk": classify_blackout_risk(state.frequency),
         "solar_weather": state.solar_weather,
         "spillage_occurred": spillage_occurred,
-        "demand_response_applied_mw": dr_mw,
+        "demand_response_applied_mw": total_dr,
+        "coal_health_pct": state.coal.health_pct,
+        "anomaly_score": anomaly_score,
+        "carbon_price_per_ton": state.carbon_price,
+        "rate_of_change_hz_per_step": rate_of_change_hz,
+        "voltage_stability_index": voltage_stability_idx,
+        "spinning_reserve_required_mw": required_reserve,
+        "spinning_reserve_mw": actual_reserve,
+        "baseline_demand_mw": state.baseline_demand_mw,
+        "industrial_demand_mw": state.industrial_demand_mw,
+        "datacenter_demand_mw": state.datacenter_demand_mw,
+        "scheduled_dr_mw": scheduled_dr,
+        "effective_demand_mw": effective_demand,
+        "steps_until_shortfall": shortfall_steps,
     }
 
 
