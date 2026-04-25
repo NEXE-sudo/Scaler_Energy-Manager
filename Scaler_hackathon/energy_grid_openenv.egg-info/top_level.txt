@@ -1,4 +1,0 @@
-client
-inference
-models
-server

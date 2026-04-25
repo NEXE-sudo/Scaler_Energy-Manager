@@ -1409,6 +1409,10 @@ def simulator_step(
     event_schedule: Dict[int, List[str]],
     event_end_schedule: Dict[int, List[str]],
     task_id: str,
+    scheduled_dr_mw: float = 0.0,
+    scheduled_dr_start: int = 0,
+    scheduled_dr_duration: int = 0,
+    reroute_transmission: bool = False,
 ) -> Dict[str, Any]:
     """
     Advance the simulation by one step.
@@ -1485,21 +1489,21 @@ def simulator_step(
     # Immediate DR comes from function input
     instant_dr = max(0.0, demand_response_mw)
 
-    # Scheduled DR inputs (optional, if you later add them properly)
-    scheduled_dr_mw = getattr(state, "scheduled_dr_mw_input", 0.0)
-    scheduled_start = getattr(state, "scheduled_dr_start_input", 0)
-    scheduled_duration = getattr(state, "scheduled_dr_duration_input", 0)
+    # Scheduled DR inputs from action
+    scheduled_dr_mw_input = scheduled_dr_mw
+    scheduled_start_input = scheduled_dr_start
+    scheduled_duration_input = scheduled_dr_duration
 
     # Enqueue scheduled DR (only once per trigger)
-    if scheduled_dr_mw > 0 and getattr(state, "_dr_scheduled_flag", False) is False:
-        for t in range(scheduled_duration):
+    if scheduled_dr_mw_input > 0 and getattr(state, "_dr_scheduled_flag", False) is False:
+        for t in range(scheduled_duration_input):
             state.scheduled_dr_queue.append(
-                (state.step + scheduled_start + t, scheduled_dr_mw)
+                (state.step + scheduled_start_input + t, scheduled_dr_mw_input)
             )
         state._dr_scheduled_flag = True
 
     # Reset flag when no new DR requested
-    if scheduled_dr_mw == 0:
+    if scheduled_dr_mw_input == 0:
         state._dr_scheduled_flag = False
 
     # Active scheduled DR this step
@@ -1611,7 +1615,7 @@ def simulator_step(
     state.last_reroute = False
 
     if "grid_fault" in state.active_events:
-        if getattr(state, "reroute_transmission_flag", False):
+        if reroute_transmission:
             state.transmission_capacity_mw = 1080
             state.last_reroute = True
         else:
@@ -1749,6 +1753,8 @@ def simulator_step(
         "scheduled_dr_mw": scheduled_dr,
         "effective_demand_mw": effective_demand,
         "steps_until_shortfall": shortfall_steps,
+        "spot_price": spot_price,
+        "duck_curve_stress_mw_per_step": duck_curve_stress,
     }
 
 
@@ -1757,51 +1763,36 @@ def simulator_step(
 # ---------------------------------------------------------------------------
 
 def build_initial_state(
-    task_id: str,
     seed: int,
     total_steps: int,
     season: str = "spring",
+    config: Dict[str, Any] = None,
 ) -> GridSimState:
     """
-    Construct and return a fully initialised GridSimState for the given task.
+    Construct and return a fully initialised GridSimState.
+    Uses config dictionary for starting conditions (from tasks.py).
     """
     rng = random.Random(seed)
     state = GridSimState(rng=rng, total_steps=total_steps, season=season)
 
-    # Task-specific configuration
-    if task_id == "easy":
-        state.coal.output_mw = 400.0
+    if config:
+        # Basic plants
+        state.coal.output_mw = config.get("coal_start_mw", 400.0)
         state.coal.online = True
-        state.battery.level_mwh = 100.0  # from TASKS["easy"]["battery_start_mwh"] — keep in sync with tasks.py
-        state.capital_budget = 0.0
-        # No renewables available
-        state.solar.available = False
-        state.wind.available = False
-        state.hydro.available = False
-        state.nuclear.available = False
+        state.coal_price = config.get("coal_start_price", 1.0)
+        state.battery.level_mwh = config.get("battery_start_mwh", 100.0)
+        state.capital_budget = config.get("capital_budget", 0.0)
+        state.hydro.reservoir_mwh = config.get("hydro_start_reservoir_mwh", 600.0)
 
-    elif task_id == "medium":
-        state.coal.output_mw = 400.0
-        state.coal.online = True
-        state.battery.level_mwh = 80.0  # from TASKS["medium"]["battery_start_mwh"] — keep in sync with tasks.py
-        state.capital_budget = 0.0
-        state.solar.available = True
-        state.wind.available = True
-        state.hydro.available = False        # can't build in medium
-        state.nuclear.available = False
-        # Hydro not available in medium — reservoir set to 0 to avoid misleading observation
-        state.hydro.reservoir_mwh = 0.0
+        # Availability
+        available = config.get("plants_available", ["coal", "battery"])
+        state.solar.available = "solar" in available
+        state.wind.available = "wind" in available
+        state.hydro.available = "hydro" in available
+        state.nuclear.available = "nuclear" in available
 
-    elif task_id == "hard":
-        state.coal.output_mw = 350.0
-        state.coal.online = True
-        state.battery.level_mwh = 60.0  # from TASKS["hard"]["battery_start_mwh"] — keep in sync with tasks.py
-        state.capital_budget = 2000.0
-        state.solar.available = True
-        state.wind.available = True
-        state.hydro.available = False        # must be built
-        state.nuclear.available = False      # must be built
-        state.hydro.reservoir_mwh = 400.0   # lower starting reservoir
-        state.coal_price = 1.2              # starts slightly elevated
+        # Special case: if hydro not available, set reservoir to 0 to avoid misleading observations
+        if not state.hydro.available and "hydro" not in config.get("buildable_plants", []):
+            state.hydro.reservoir_mwh = 0.0
 
     return state

@@ -36,6 +36,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 # ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
 # Optional .env loading (helps locally)
 # ---------------------------------------------------------------------------
 try:
@@ -49,18 +53,16 @@ from openai import OpenAI
 # ---------------------------------------------------------------------------
 # Local imports (work both when run from repo root or as installed pkg)
 # ---------------------------------------------------------------------------
+# Local imports
 try:
     from .energy_grid_environment import EnergyGridEnvironment
-    from .grader import grade_result_to_dict
     from .tasks import get_task, TASK_ORDER
-except ImportError:
-    from server.energy_grid_environment import EnergyGridEnvironment
-    from server.grader import grade_result_to_dict
-    from server.tasks import get_task, TASK_ORDER
-
-try:
+    from .llm_adapter import observation_to_text, extract_action_from_llm_output
     from ..models import EnergyGridAction, EnergyGridObservation
-except ImportError:
+except (ImportError, ValueError):
+    from server.energy_grid_environment import EnergyGridEnvironment
+    from server.tasks import get_task, TASK_ORDER
+    from server.llm_adapter import observation_to_text, extract_action_from_llm_output
     from models import EnergyGridAction, EnergyGridObservation
 
 # ---------------------------------------------------------------------------
@@ -68,7 +70,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 _last_call_time: float = 0.0
-MIN_CALL_INTERVAL: float = 5.5  # seconds — safe for 8K TPM at ~700 tokens/call
+MIN_CALL_INTERVAL: float = 0.5  # Faster evaluation
 
 def _rate_limited_sleep(verbose: bool = False) -> None:
     """Sleep only the remaining gap since the last API call."""
@@ -97,15 +99,18 @@ def _build_client() -> tuple[OpenAI, str]:
     api_base_url = os.getenv("API_BASE_URL")
     model_name   = os.getenv("MODEL_NAME")
     api_key      = (
-        os.getenv("OPENAI_API_KEY")
+        os.getenv("GROQ_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
         or os.getenv("HF_TOKEN")
     )
 
     if not (api_base_url and model_name and api_key):
         raise EnvironmentError(
-            "Missing required API configuration. Set API_BASE_URL, MODEL_NAME, "
-            "and an API key (OPENAI_API_KEY or HF_TOKEN)."
+            f"Missing required API configuration. URL={bool(api_base_url)}, "
+            f"Model={bool(model_name)}, Key={bool(api_key)}"
         )
+
+    print(f"[DEBUG] Using API Key starting with: {api_key[:5]}...")
     
     try:
         client = OpenAI(api_key=api_key, base_url=api_base_url)
@@ -118,46 +123,79 @@ def _build_client() -> tuple[OpenAI, str]:
     return client, model_name
 
 # ---------------------------------------------------------------------------
-# Token budget (small enough to force a complete ACTION line)
+# Model Routing & Token budget
 # ---------------------------------------------------------------------------
 
-MAX_TOKENS = 512  # Llama model doesn't use extended thinking, 512 is sufficient
-PLANNER_MAX_TOKENS = 1024  # Higher budget for structured 5-part plan to avoid truncation in hard task
+PLANNING_MODEL = os.getenv("PLANNING_MODEL", "llama-3.3-70b-versatile")
+FAST_MODEL     = os.getenv("FAST_MODEL", "llama-3.1-8b-instant")
+
+PLANNING_MAX_TOKENS = 600  # Detailed reasoning for infrastructure
+FAST_MAX_TOKENS     = 150  # Quick, directive response for real-time control
 
 # ---------------------------------------------------------------------------
 # Prompt builder
 # ---------------------------------------------------------------------------
 
-def _build_system_prompt(task_id: str = "easy", plan: str = "", step: int = 0) -> str:
-    """
-    Build the system prompt for the executor.
-    For Hard task, injects the planner output only up to step 20 to save tokens.
-    """
-    # -------------------------------------------------------------------
-    # Compact prompt - no REASON requirement (saves ~30% tokens)
-    # -------------------------------------------------------------------
-    base = """You are an expert electricity grid operator. Output ONLY valid JSON ACTION:
-{"coal_delta":<-100..100>,"hydro_delta":<-80..80>,"nuclear_delta":<-10..10>,"battery_mode":"charge|discharge|idle","plant_action":"none|build_solar|build_wind|build_hydro|build_nuclear|close_coal","emergency_coal_boost":true|false,"demand_response_mw":<0..150>}
+# ---------------------------------------------------------------------------
+# Multi-Agent Role Prompts
+# ---------------------------------------------------------------------------
 
-Constraints:
-- Coal: min 200 MW, max 600 MW, ramp ±100 MW/step.
-- Nuclear: min 300 MW, ramp ±10 MW/step, SCRAM → 0 for 8 steps.
-- Battery: charge/discharge ≤ 50 MW, cannot do both.
-- Frequency: keep 49.5 - 50.5 Hz, blackout < 47.5 Hz or > 51.5 Hz.
-- Gap = demand - total_generation (positive = shortfall).
+AGENT_PROMPTS = {
+    "planning": "Planner. Goal: Long-term reliability. Output JSON with 'plant_action' (none, build_solar, build_wind, build_hydro, build_nuclear, close_coal).",
+    "dispatch": "Dispatch. Goal: 50Hz. Output JSON with 'coal_delta' (-100 to 100), 'hydro_delta' (-80 to 80), 'nuclear_delta' (-10 to 10), 'battery_mode' (charge, discharge, idle), 'emergency_coal_boost' (bool).",
+    "market": "Market. Goal: Efficiency. Output JSON with 'demand_response_mw' (0 to 150), 'grid_export_mw' (0 to 100), 'grid_import_mw' (0 to 100), 'coal_price_bid' (0.5 to 3.0)."
+}
 
-If gap > 0 → use battery discharge first, then increase coal, then emergency boost (last resort only).
-If gap < 0 (oversupply > 20 MW) → reduce coal immediately, or charge battery.
-Never leave a positive gap unresolved.
-Operational strategy:
-- If gap > 0: discharge battery first (if >20%), then raise coal, boost only for blackout.
-- If gap < 0 and oversupply >20 MW: reduce coal first, then charge battery.
-- Keep battery above 20% SoC. Minimise coal when demand is met.
+MAX_EVAL_STEPS = 20
+
+def _build_system_prompt(
+    task_id: str = "easy",
+    plan: str = "",
+    step: int = 0,
+    obs_dict: dict = None,
+    agent_type: str = "unified"
+) -> str:
+    """
+    Build system prompt for LLM.
+    Includes optional multi-agent context and planner injection.
+    """
+
+    # Use role-specific prompt if provided, else use the unified base
+    role_prompt = AGENT_PROMPTS.get(agent_type, """You are an expert electricity grid operator.
+Your priorities:
+1. Prevent blackout
+2. Maintain frequency near 50 Hz
+3. Ensure sufficient reserve
+4. Optimise cost only when stable
+""")
+
+    base = f"""{role_prompt}
+
+Think step-by-step before acting.
+
+Respond EXACTLY in this format:
+
+Thought:
+<Your reasoning here>
+
+Action:
+{{
+  // Only the fields relevant to your role
+}}
 """
 
-    # Only inject plan for hard task steps 0-39 (covers through coal outage at 23-25)
+    # ---- Multi-agent context (every 3 steps only) ----
+    if task_id == "hard" and obs_dict is not None and step % 3 == 0:
+        try:
+            from .llm_adapter import build_multi_agent_prompt
+            base += "\n\n" + build_multi_agent_prompt(obs_dict)
+        except Exception:
+            pass  # fail silently to avoid breaking execution
+
+    # ---- Strategic plan injection (early phase only) ----
     if task_id == "hard" and plan and step < 40:
         base += f"\n\nSTRATEGIC PLAN (follow this unless state forces deviation):\n{plan}"
+
     return base
 
 def _build_planner_prompt(obs: "EnergyGridObservation") -> str:
@@ -194,7 +232,7 @@ TIMING CONSTRAINTS:
 - Nuclear started at step 10 → online at step 25 (too late — overlaps outage).
 - Wind started at step 0 → online at step 6 (provides early buffer before peak/outage).
 
-RECOMMENDED STRATEGY (strong baseline, may deviate with justification):
+Example strong strategy (you may deviate if justified):
 - Step 0: build_nuclear (500 MW online at step 15 — critical baseload, online before outage)
 - Step 1: build_hydro (200 MW online at step 11 — dispatchable, helps offset coal outage)
 - Step 2+: preserve remaining 400 units as reserve capital or invest in wind if needed
@@ -218,131 +256,29 @@ PLAN:
 Be concise, decisive, and forward‑looking.
 """
 
-# ---------------------------------------------------------------------------
-# User prompt (state summary) - unchanged apart from minor formatting
-# ---------------------------------------------------------------------------
-
-def _build_user_prompt(obs: EnergyGridObservation, task_id: str) -> str:
-    """Detailed state for model decision-making."""
-    task = get_task(task_id)
-    total = (obs.coal_mw + obs.solar_mw + obs.wind_mw + 
-             obs.hydro_mw + obs.nuclear_mw)
-    gap = obs.demand_mw - total
-    battery_pct = int(100*obs.battery_mwh/max(1,obs.battery_capacity_mwh))
-    
-    prompt = (
-        f"Step {obs.step}/{task['total_steps']} | "
-        f"Demand: {obs.demand_mw:.0f} MW | "
-        f"Generation: {total:.0f} MW | "
-        f"Unmet Demand: {obs.unmet_demand_mw:.0f} MW | "
-        f"Gap: {gap:+.0f} MW | "
-        f"Coal: {obs.coal_mw:.0f}/{obs.coal_max_mw:.0f} MW | "
-        f"Solar: {obs.solar_mw:.0f} MW | "
-        f"Wind: {obs.wind_mw:.0f} MW | "
-        f"Hydro: {obs.hydro_mw:.0f} MW | "
-        f"Nuclear: {obs.nuclear_mw:.0f} MW | "
-        f"Battery: {battery_pct}% ({obs.battery_mwh:.0f}/{obs.battery_capacity_mwh:.0f} MWh) | "
-        f"Frequency: {obs.frequency_hz:.2f} Hz | "
-        f"Risk: {obs.blackout_risk}"
-    )
-    
-    # Hard task: include budget, events, and construction status
-    if task_id == "hard":
-        if obs.plants_building:
-            construction_str = ", ".join(
-                f"{p['type']} ({p['steps_remaining']} steps left)"
-                for p in obs.plants_building
-            )
-            prompt += f" | Building: {construction_str}"
-        prompt += (
-            f" | Budget: {obs.capital_budget:.0f} | "
-            f"Events: {', '.join(obs.active_events) if obs.active_events else 'none'}"
-        )
-    
-    return prompt
-
-
 def _parse_action(response_text: str) -> EnergyGridAction:
     """
-    Extract a well‑formed JSON ACTION block from the LLM response.
-    Handles:
-        - empty/whitespace responses
-        - markdown fences (```, ```json)
-        - single quotes → double quotes
-        - trailing commas
-        - Python booleans (True/False)
-        - multi‑line JSON
-        - null values
-    Returns a fully‑validated EnergyGridAction; on failure returns a
-    safe default (all zeros / idle) and prints a warning.
-    """
-    # Handle empty or pure whitespace responses
-    if not response_text or not response_text.strip():
-        print("[WARN] Parser failed - empty response from model")
-        return EnergyGridAction()  # safe default (no‑op)
+    Extract action from LLM response using the adapter.
     
-    # 1️⃣ strip markdown fences and surrounding whitespace
-    txt = re.sub(r'^```[a-z]*\n|```$', '', response_text.strip(), flags=re.MULTILINE)
-    txt = txt.strip()  # Remove any extra whitespace after fence removal
-
-    # If it's now empty, return default
-    if not txt:
-        print("[WARN] Parser failed - empty after stripping markdown")
-        return EnergyGridAction()
-
-    # 2️⃣ balanced‑brace extraction (find the first complete JSON object)
-    def extract_json(s: str) -> Optional[str]:
-        start = s.find('{')
-        if start == -1:
-            return None
-        depth = 0
-        for i, ch in enumerate(s[start:], start):
-            if ch == '{':
-                depth += 1
-            elif ch == '}':
-                depth -= 1
-                if depth == 0:
-                    return s[start:i + 1]
-        return None
-
-    # Prefer the JSON after the word ACTION (if present)
-    action_pos = txt.upper().find('ACTION')
-    search_text = txt[action_pos:] if action_pos != -1 else txt
-    raw = extract_json(search_text) or extract_json(txt)
-
-    if raw is None:
-        print("[WARN] Parser failed - no JSON object found")
-        print(f"[WARN] Response length: {len(txt)} chars")
-        print("[WARN] Raw response:")
-        print(repr(txt))
-        return EnergyGridAction()      # safe default (no‑op)
-
-    # 3️⃣ normalise the JSON text
-    raw = raw.replace("'", '"')  # Single quotes to double quotes
-    raw = re.sub(r',\s*}', '}', raw)                     # Strip trailing commas
-    raw = re.sub(r',\s*]', ']', raw)                     # Strip trailing commas in arrays
-    raw = re.sub(r'\bTrue\b', 'true', raw, flags=re.I)   # Python bool → JSON bool
-    raw = re.sub(r'\bFalse\b', 'false', raw, flags=re.I)
-    raw = re.sub(r'\bNone\b', 'null', raw, flags=re.I)   # Python None → JSON null
-    # Handle unquoted string values that might appear
-    raw = re.sub(r':\s*([a-zA-Z_][a-zA-Z0-9_]*)(?=[,}])', r': "\1"', raw)
-
-    try:
-        payload = json.loads(raw)
-        return _dict_to_action(payload)
-    except json.JSONDecodeError as exc:
-        print(f"[WARN] JSON decode error while parsing ACTION: {exc}")
-        print("[WARN] Attempted JSON:")
-        print(raw)
-        return EnergyGridAction()      # safe default
-    except Exception as exc:
-        print(f"[WARN] Unexpected error parsing action: {exc}")
-        return EnergyGridAction()  # safe default
+    Now expects "Thought:" followed by "Action:" format, but gracefully handles
+    raw JSON responses for backward compatibility.
+    
+    Returns a fully‑validated EnergyGridAction; on failure returns a
+    safe default (all zeros / idle).
+    """
+    if not response_text or not response_text.strip():
+        return EnergyGridAction() # SAFE_DEFAULT_ACTION equivalent
+    
+    # Use adapter to extract action dict from LLM output
+    action_dict = extract_action_from_llm_output(response_text)
+    
+    # Convert dict to EnergyGridAction
+    return _dict_to_action(action_dict)
 
 def _dict_to_action(data: Dict[str, Any]) -> EnergyGridAction:
     """
-    Convert parsed JSON dict to EnergyGridAction.
-    Clamps every numeric field to the model‑defined limits.
+    Convert action dict to EnergyGridAction.
+    Data dict should already be clipped by the adapter, but we validate once more.
     """
     def _clamp(val: Any, lo: float, hi: float, default: float) -> float:
         try:
@@ -350,17 +286,17 @@ def _dict_to_action(data: Dict[str, Any]) -> EnergyGridAction:
         except (TypeError, ValueError):
             return default
 
-    # Bool handling (accepts true/false, "true", "1", "yes")
+    # Bool handling
     emergency_boost = data.get("emergency_coal_boost", False)
     if isinstance(emergency_boost, str):
         emergency_boost = emergency_boost.lower() in ("true", "1", "yes")
 
-    # Battery mode normalisation
+    # Battery mode
     battery_mode = str(data.get("battery_mode", "idle")).lower().strip()
     if battery_mode not in ("charge", "discharge", "idle"):
         battery_mode = "idle"
 
-    # Plant‑action normalisation
+    # Plant action
     plant_action = str(data.get("plant_action", "none")).lower().strip()
     valid_plant_actions = {
         "none", "build_solar", "build_wind",
@@ -420,6 +356,16 @@ def _apply_control_layer(
 # Single‑task runner
 # ---------------------------------------------------------------------------
 
+def _is_major_event(obs: EnergyGridObservation, prev_obs: Optional[EnergyGridObservation]) -> bool:
+    """Detect significant grid changes requiring Planning Agent attention."""
+    if prev_obs is None: return True
+    # Coal or Nuclear Outage
+    if prev_obs.coal_online and not obs.coal_online: return True
+    if prev_obs.nuclear_online and not obs.nuclear_online: return True
+    # Demand Spike (> 15% increase)
+    if obs.demand_mw > prev_obs.demand_mw * 1.15: return True
+    return False
+
 def run_task(
     env: EnergyGridEnvironment,
     client: OpenAI,
@@ -460,12 +406,12 @@ def run_task(
             print("  [PLANNER] Generating strategic plan...")
         planner_response = _call_llm_with_retry(
             client=client,
-            model=model,
+            model=PLANNING_MODEL,
             system="You are a strategic planner. Output a concise operational plan only.",
             messages=[{"role": "user", "content": _build_planner_prompt(obs)}],
-            max_retries=2,  # faster failure recovery
-            max_tokens=PLANNER_MAX_TOKENS,
-            stop_at_json=False,  # Planner returns free-form text, not JSON
+            max_retries=2,
+            max_tokens=PLANNING_MAX_TOKENS,
+            agent_type="planning",
             verbose=verbose,
         )
         plan = planner_response.strip()
@@ -477,73 +423,123 @@ def run_task(
     step_count = 0
     rewards_list: List[float] = []  # Track all rewards for structured logging
 
-    for step in range(total_steps):
+    last_planning_action = EnergyGridAction(plant_action="none", thought="Maintaining plan.")
+    prev_obs = None
+    history = []
+
+    for step in range(min(total_steps, MAX_EVAL_STEPS)):
         # Wall-clock timeout check before each LLM call
         if time.time() - episode_start > EPISODE_TIMEOUT:
             print(f"[WARN] Episode timeout reached at step {step}, stopping early", flush=True)
             break
 
-        # Rebuild system prompt each step: drop plan after step 20 to save tokens
-        system_prompt = _build_system_prompt(task_id=task_id, plan=plan, step=step)
-        user_prompt = _build_user_prompt(obs, task_id)
+        # --- ROUND 1: PROPOSALS ---
+        # 1. Gated Planning Agent
+        if _is_major_event(obs, prev_obs):
+            if verbose: print(f"  [EVENT] Triggering Planning Agent at step {step}")
+            sys_p = _build_system_prompt(task_id, plan, step, agent_type="planning")
+            resp_p = _call_llm_with_retry(client, PLANNING_MODEL, sys_p, [{"role": "user", "content": observation_to_text(obs.__dict__)}], agent_type="planning", verbose=verbose)
+            last_planning_action = _parse_action(resp_p)
+        
+        # 2. Dispatch and Market Proposals (Always called)
+        sys_d = _build_system_prompt(task_id, plan, step, agent_type="dispatch")
+        resp_d = _call_llm_with_retry(client, model, sys_d, [{"role": "user", "content": observation_to_text(obs.__dict__)}], agent_type="dispatch", verbose=verbose)
+        prop_d = _parse_action(resp_d)
 
-        # LLM call — stateless, no conversation history
-        response_text = _call_llm_with_retry(
-            client=client,
-            model=model,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
-            max_retries=2,  # faster failure recovery
-            verbose=verbose,
-        )
+        sys_m = _build_system_prompt(task_id, plan, step, agent_type="market")
+        resp_m = _call_llm_with_retry(client, model, sys_m, [{"role": "user", "content": observation_to_text(obs.__dict__)}], agent_type="market", verbose=verbose)
+        prop_m = _parse_action(resp_m)
 
-        # Parse + sanitise action
-        action = _parse_action(response_text)
+        if task_id == "easy":
+            # Task 1: Proposal becomes final immediately for easy
+            last_planning_action.proposal_type = "revision"
+            prop_d.proposal_type = "revision"
+            prop_m.proposal_type = "revision"
+            
+            env.step_planning(last_planning_action)
+            env.step_dispatch(prop_d)
+            obs = env.step_market(prop_m) # Advances simulator
+        else:
+            # Round 1 proposals submitted
+            env.step_planning(last_planning_action)
+            env.step_dispatch(prop_d)
+            obs_mid = env.step_market(prop_m)
 
-        # Apply safety guards
-        action = _apply_control_layer(action, obs)
+            # --- ROUND 2: REVISIONS (Dispatch & Market Only) ---
+            sys_rd = _build_system_prompt(task_id, plan, step, agent_type="dispatch")
+            resp_rd = _call_llm_with_retry(client, model, sys_rd, [{"role": "user", "content": observation_to_text(obs_mid.__dict__)}], agent_type="dispatch", verbose=verbose)
+            rev_d = _parse_action(resp_rd)
+            rev_d.proposal_type = "revision"
 
-        # Execute step
-        obs = env.step(action)
+            sys_rm = _build_system_prompt(task_id, plan, step, agent_type="market")
+            resp_rm = _call_llm_with_retry(client, model, sys_rm, [{"role": "user", "content": observation_to_text(obs_mid.__dict__)}], agent_type="market", verbose=verbose)
+            rev_m = _parse_action(resp_rm)
+            rev_m.proposal_type = "revision"
+
+            # Round 2 submitted (advances simulator)
+            last_planning_action.proposal_type = "revision"
+            env.step_planning(last_planning_action)
+            env.step_dispatch(rev_d)
+            obs = env.step_market(rev_m)
+
+        # Collect history
+        final_d = rev_d if task_id != "easy" else prop_d
+        final_m = rev_m if task_id != "easy" else prop_m
+
+        history.append({
+            "step": step_count + 1,
+            "demand": float(obs.demand_mw),
+            "supply": float(obs.coal_mw + obs.solar_mw + obs.wind_mw + obs.hydro_mw + obs.nuclear_mw),
+            "frequency": float(obs.frequency_hz),
+            "blackoutRisk": obs.blackout_risk,
+            "planning": {
+                "thought": last_planning_action.thought or "Continuing baseline strategy.",
+                "action": last_planning_action.plant_action
+            },
+            "dispatch": {
+                "thought": final_d.thought or "Optimizing real-time dispatch.",
+                "controls": {
+                    "coal_delta": float(final_d.coal_delta),
+                    "hydro_delta": float(final_d.hydro_delta),
+                    "battery_mode": final_d.battery_mode
+                }
+            },
+            "market": {
+                "thought": final_m.thought or "Managing economic efficiency.",
+                "controls": {
+                    "demand_response": float(final_m.demand_response_mw),
+                    "import_export": f"{float(final_m.grid_import_mw)} MW import"
+                }
+            },
+            "finalAction": {
+                "coal_delta": float(final_d.coal_delta),
+                "hydro_delta": float(final_d.hydro_delta),
+                "battery_mode": final_d.battery_mode,
+                "demand_response": float(final_m.demand_response_mw),
+            },
+            "reward": float(reward),
+            "status": "stable" if obs.frequency_hz > 49.8 and obs.frequency_hz < 50.2 else "warning" if obs.frequency_hz > 49.0 else "failure"
+        })
+
+        prev_obs = obs
         step_count += 1
         reward = obs.reward or 0.0
         rewards_list.append(reward)
-        
-        # Validate observation has sensible values (debug helper)
-        if obs.demand_mw == 0 and step_count > 1:
-            print(f"[DEBUG] Step {step_count}: demand_mw is zero (unusual)", flush=True)
-        if obs.coal_mw == 0 and obs.coal_online and step_count > 1:
-            print(f"[DEBUG] Step {step_count}: coal offline but coal_online=True", flush=True)
 
-        # Display detailed state after step
+        # Detailed state logging
         if verbose:
             print(
                 f"  Step {step_count:02d} | "
-                f"coal_delta={action.coal_delta:+.0f} "
-                f"battery={action.battery_mode} "
-                f"plant={action.plant_action} | "
                 f"Coal: {obs.coal_mw:.0f}/{obs.coal_max_mw:.0f} MW | "
                 f"Demand: {obs.demand_mw:.0f} MW | "
                 f"Unmet: {obs.unmet_demand_mw:.0f} MW | "
-                f"Battery: {int(100*obs.battery_mwh/max(1,obs.battery_capacity_mwh))}% | "
                 f"Freq: {obs.frequency_hz:.2f} Hz | "
                 f"Reward: {reward:.2f}"
             )
 
-        # Emit structured log: STEP
-        action_str = (
-            f"coal_delta={action.coal_delta:+.0f} "
-            f"battery_mode={action.battery_mode} "
-            f"plant_action={action.plant_action}"
-        )
-        done_str = str(obs.done).lower()
-        print(f"[STEP] step={step_count} action={action_str} reward={reward:.2f} done={done_str} error=null", flush=True)
-
-        last_action_summary = (
-            f"LastAction: coal_delta={action.coal_delta:+.0f} "
-            f"battery={action.battery_mode} "
-            f"→ unmet={obs.unmet_demand_mw:.0f}MW freq={obs.frequency_hz:.3f}Hz"
-        )
+        # Emit structured log for evaluation parsing
+        log_msg = f"[STEP] step={step_count} reward={reward:.2f} done={str(obs.done).lower()} unmet={obs.unmet_demand_mw:.0f}MW freq={obs.frequency_hz:.3f}Hz"
+        print(log_msg, flush=True)
 
         # Accumulate total reward (always, not just in verbose mode)
         total_reward += reward
@@ -579,6 +575,8 @@ def run_task(
     success_str = str(success).lower()
     rewards_str = ",".join(f"{r:.2f}" for r in rewards_list)
     print(f"[END] success={success_str} steps={step_count} score={score:.3f} rewards={rewards_str}", flush=True)
+    if rewards_list:
+        print(f"[METRIC] avg_reward={sum(rewards_list)/len(rewards_list):.3f}", flush=True)
 
     if verbose:
         print("\n  📊 GRADE:", grade.get("total_score", 0.0))
@@ -596,10 +594,11 @@ def run_task(
         "total_steps": total_steps,
         "total_reward": round(total_reward, 4),
         "metadata": grade.get("metadata", {}),
+        "history": history
     }
 
 # ---------------------------------------------------------------------------
-# LLM call with retry (now uses MAX_TOKENS)
+# LLM call with retry (now uses tiered model routing)
 # ---------------------------------------------------------------------------
 
 def _call_llm_with_retry(
@@ -608,27 +607,26 @@ def _call_llm_with_retry(
     system: str,
     messages: list,
     max_retries: int = 3,
-    verbose: bool = False,
-    max_tokens: int = MAX_TOKENS,
-    stop_at_json: bool = True,
+    agent_type: str = "dispatch",
+    verbose: bool = True
 ) -> str:
     """
-    Call the LLM API with exponential back‑off on rate‑limit errors.
-    Returns the raw `content` string of the assistant message.
+    Call LLM with tiered model routing and retries.
     """
+    # Override model based on agent_type
+    target_model = PLANNING_MODEL if agent_type == "planning" else FAST_MODEL
+    max_tokens   = PLANNING_MAX_TOKENS if agent_type == "planning" else FAST_MAX_TOKENS
+    
     for attempt in range(max_retries):
         try:
             _rate_limited_sleep(verbose=verbose)
             response = client.chat.completions.create(
-                model=model,
+                model=target_model,
+                messages=[{"role": "system", "content": system}] + messages,
                 max_tokens=max_tokens,
-                temperature=0.0,
-                stop=None,
-                messages=[{"role": "system", "content": system}, *messages],
+                temperature=0.1
             )
             # Extract the assistant's content
-            # Note: Some models (Groq) use "reasoning" field for extended thinking
-            # Try content first, fall back to reasoning if content is empty
             content = response.choices[0].message.content or ""
             
             # If content is empty but reasoning exists, use reasoning as the response

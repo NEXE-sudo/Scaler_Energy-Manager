@@ -44,25 +44,11 @@ try:
         PlanningAgentAction,
         DispatchAgentAction,
         MarketAgentAction,
-    )
-except ImportError:
-    from models import (
-        EnergyGridAction,
-        EnergyGridObservation,
-        PlanningAgentAction,
-        DispatchAgentAction,
-        MarketAgentAction,
         PlanningAgentObservation,
         DispatchAgentObservation,
         MarketAgentObservation,
     )
-
-try:
     from .normalization import normalize_observation
-except ImportError:
-    from server.normalization import normalize_observation
-
-try:
     from .simulator import (
         GridSimState,
         build_initial_state,
@@ -79,7 +65,18 @@ try:
         grade_result_to_dict,
         GradeResult,
     )
-except ImportError:
+except (ImportError, ModuleNotFoundError, ValueError):
+    from models import (
+        EnergyGridAction,
+        EnergyGridObservation,
+        PlanningAgentAction,
+        DispatchAgentAction,
+        MarketAgentAction,
+        PlanningAgentObservation,
+        DispatchAgentObservation,
+        MarketAgentObservation,
+    )
+    from server.normalization import normalize_observation
     from server.simulator import (
         GridSimState,
         build_initial_state,
@@ -134,42 +131,41 @@ MARKET_REWARD_COMPONENTS = {
 
 class StepActionBuffer:
     """
-    Buffers partial actions from each agent within a single simulation step.
-
-    A step advances only when all required agents have submitted.
-    In single-agent mode the buffer is bypassed entirely.
+    Buffers proposals and revisions from agents within a single simulation step.
+    A step advances only after all required agents have submitted their revisions.
     """
 
     def __init__(self) -> None:
-        self.planning: Optional[PlanningAgentAction] = None
-        self.dispatch: Optional[DispatchAgentAction] = None
-        self.market: Optional[MarketAgentAction] = None
+        # Round 1: Proposals
+        self.proposals: Dict[str, Any] = {}
+        self.thoughts: Dict[str, str] = {}
+        
+        # Round 2: Revisions
+        self.revisions: Dict[str, Any] = {}
+        
+        self.phase: str = "proposal" # "proposal" or "revision"
 
     def reset(self) -> None:
-        self.planning = None
-        self.dispatch = None
-        self.market = None
+        self.proposals.clear()
+        self.thoughts.clear()
+        self.revisions.clear()
+        self.phase = "proposal"
 
-    @property
-    def is_complete(self) -> bool:
-        """True when all three agents have submitted actions."""
-        return (
-            self.planning is not None
-            and self.dispatch is not None
-            and self.market is not None
-        )
+    def is_round_complete(self, round_name: str) -> bool:
+        """True when all three agents have submitted for the given round."""
+        target = self.proposals if round_name == "proposal" else self.revisions
+        return len(target) == 3
 
-    def to_unified_action(self) -> EnergyGridAction:
-        """
-        Merge buffered agent actions into a unified EnergyGridAction
-        for the simulator. Called only when is_complete is True.
-        """
-        assert self.is_complete, "Cannot merge incomplete action buffer"
-        return EnergyGridAction.from_agents(
-            dispatch=self.dispatch,
-            planning=self.planning,
-            market=self.market,
-        )
+    def get_negotiation_history(self) -> List[Dict[str, Any]]:
+        """Lightweight history of Round 1 for observations in Round 2."""
+        return [
+            {
+                "agent": k, 
+                "proposal": v.model_dump() if hasattr(v, "model_dump") else v, 
+                "thought": self.thoughts.get(k, "")
+            }
+            for k, v in self.proposals.items()
+        ]
 
 
 
@@ -239,12 +235,11 @@ class EnergyGridEnvironment(Environment):
 
         episode_seed = seed if seed is not None else task["seed"]
         self._sim = build_initial_state(
-            task_id=task_id,
             seed=episode_seed,
             total_steps=task["total_steps"],
             season=task["season"],
+            config=task,
         )
-        self._sim.capital_budget = task["capital_budget"]
 
         raw_schedule = schedule_events(
             task_id=task_id,
@@ -340,6 +335,11 @@ class EnergyGridEnvironment(Environment):
 
         else:
             return obs
+
+        # Always allow negotiation history to pass through
+        allowed.append("negotiation_history")
+        allowed.append("reward")
+        allowed.append("done")
 
         filtered = {k: data[k] for k in allowed if k in data}
 
@@ -438,100 +438,78 @@ class EnergyGridEnvironment(Environment):
     # Multi-agent steps
     # ------------------------------------------------------------------
 
-    def step_planning(
-        self, action: PlanningAgentAction
-    ) -> EnergyGridObservation:
-        """
-        Receive planning agent action. Buffers until all agents submit.
+    def step_planning(self, action: PlanningAgentAction) -> EnergyGridObservation:
+        return self._handle_agent_step("planning", action)
 
-        Returns the CURRENT observation (unchanged) — the simulator has
-        not advanced yet. The observation only updates after step_market()
-        completes the step.
+    def step_dispatch(self, action: DispatchAgentAction) -> EnergyGridObservation:
+        return self._handle_agent_step("dispatch", action)
 
-        The planning agent typically fires once at episode start and then
-        reactively when events change the capacity outlook.
-        """
+    def step_market(self, action: MarketAgentAction) -> EnergyGridObservation:
+        return self._handle_agent_step("market", action)
+
+    def _handle_agent_step(self, agent_type: str, action: Any) -> EnergyGridObservation:
+        """Universal handler for all three multi-agent step methods."""
         if self._sim is None:
             return self.reset(self._task_id)
 
-        self._action_buffer.planning = action
+        # 1. Store action based on phase
+        if action.proposal_type == "proposal":
+            self._action_buffer.proposals[agent_type] = action
+            if action.thought:
+                self._action_buffer.thoughts[agent_type] = action.thought
+            
+            # If Round 1 complete, move to revision phase
+            if self._action_buffer.is_round_complete("proposal"):
+                self._action_buffer.phase = "revision"
+        
+        elif action.proposal_type == "revision":
+            self._action_buffer.revisions[agent_type] = action
+            
+            # If Round 2 complete, execute step
+            if self._action_buffer.is_round_complete("revision"):
+                return self._advance_multi_agent_step()
+        
+        else:
+            # Fallback for immediate execution (OpenEnv compliance)
+            unified = self._convert_to_unified(agent_type, action)
+            return self.step(unified)
 
-        # If already complete (e.g. planning submitted last), advance
-        if self._action_buffer.is_complete:
-            return self._advance_multi_agent_step()
+        # Return current observation + negotiation history
+        obs = self._last_obs or self._build_observation(reward=0.0, done=False)
+        obs.negotiation_history = self._action_buffer.get_negotiation_history()
+        return self._filter_observation_for_agent(obs, agent_type)
 
-        # Return current obs — step not yet complete
-        obs = self._last_obs or self._build_observation(
-    reward=0.0,
-    done=False
-)
-        return self._filter_observation_for_agent(obs, "planning")
-
-    def step_dispatch(
-        self, action: DispatchAgentAction
-    ) -> EnergyGridObservation:
-        """
-        Receive dispatch agent action. Buffers until all agents submit.
-
-        Returns current observation if step not yet complete.
-        Advances simulator if this completes the action buffer.
-        """
-        if self._sim is None:
-            return self.reset(self._task_id)
-
-        self._action_buffer.dispatch = action
-
-        if self._action_buffer.is_complete:
-            return self._advance_multi_agent_step()
-
-        obs = self._last_obs or self._build_observation(
-    reward=0.0,
-    done=False
-)
-        return self._filter_observation_for_agent(obs, "dispatch")
-
-    def step_market(
-        self, action: MarketAgentAction
-    ) -> EnergyGridObservation:
-        """
-        Receive market agent action.
-
-        This is typically the LAST action submitted each step (market
-        agent responds to what dispatch and planning have decided).
-        Advances the simulator when the buffer is complete.
-
-        Also handles grid import/export economics before calling
-        simulator_step().
-        """
-        if self._sim is None:
-            return self.reset(self._task_id)
-
-        self._action_buffer.market = action
-
-        if self._action_buffer.is_complete:
-            return self._advance_multi_agent_step()
-
-        obs = self._last_obs or self._build_observation(
-    reward=0.0,
-    done=False
-)
-        return self._filter_observation_for_agent(obs, "market")
+    def _convert_to_unified(self, agent_type: str, action: Any) -> EnergyGridAction:
+        """Helper to create a partial unified action for backward compatibility."""
+        if agent_type == "planning":
+            return EnergyGridAction(plant_action=action.plant_action)
+        elif agent_type == "dispatch":
+            return EnergyGridAction(
+                coal_delta=action.coal_delta,
+                hydro_delta=action.hydro_delta,
+                nuclear_delta=action.nuclear_delta,
+                battery_mode=action.battery_mode,
+                emergency_coal_boost=action.emergency_coal_boost
+            )
+        else: # market
+            return EnergyGridAction(demand_response_mw=action.demand_response_mw)
 
     def _advance_multi_agent_step(self) -> EnergyGridObservation:
         """
-        Internal: advance simulator using the completed action buffer.
-        Called when all three agents have submitted actions for this step.
+        Internal: advance simulator using the merged actions from revisions.
         """
         if self._sim.episode_ended:
             return self._build_observation(reward=0.0, done=True)
 
-        unified = self._action_buffer.to_unified_action()
-        market = self._action_buffer.market
+        # Merge actions from all agents
+        unified = self._merge_actions()
+        revisions = self._action_buffer.revisions
+        p, d, m = revisions["planning"], revisions["dispatch"], revisions["market"]
 
-        # ── Grid trading (new market agent feature) ──────────────────────
+        # ── Grid trading (market agent feature) ──────────────────────
         # Apply import/export BEFORE simulator_step so demand is adjusted
-        net_import = max(0.0, market.grid_import_mw - market.grid_export_mw)
-        net_export = max(0.0, market.grid_export_mw - market.grid_import_mw)
+        net_import = max(0.0, m.grid_import_mw - m.grid_export_mw)
+        net_export = max(0.0, m.grid_export_mw - m.grid_import_mw)
 
         # Trading economics
         coal_price = self._sim.coal_price
@@ -562,6 +540,10 @@ class EnergyGridEnvironment(Environment):
             event_schedule=self._event_schedule,
             event_end_schedule=self._event_end_schedule,
             task_id=self._task_id,
+            scheduled_dr_mw=m.scheduled_dr_mw,
+            scheduled_dr_start=m.scheduled_dr_start,
+            scheduled_dr_duration=m.scheduled_dr_duration,
+            reroute_transmission=d.reroute_transmission,
         )
         self._last_step_result = result
         self._track_plants()
@@ -592,6 +574,63 @@ class EnergyGridEnvironment(Environment):
         )
         self._last_obs = obs
         return obs
+
+    def _merge_actions(self) -> EnergyGridAction:
+        """
+        Combines revisions from three agents into one unified simulator action.
+        Implements domain priority and weighted averaging.
+        """
+        revisions = self._action_buffer.revisions
+        p = revisions.get("planning")
+        d = revisions.get("dispatch")
+        m = revisions.get("market")
+
+        # 1. Weighted Average for generation (Dispatch has more weight for stability)
+        merged_coal_delta = (d.coal_delta * 0.7) + (m.coal_delta * 0.3)
+        merged_hydro_delta = (d.hydro_delta * 0.7) + (m.hydro_delta * 0.3)
+        merged_nuclear_delta = (d.nuclear_delta * 0.7) + (m.nuclear_delta * 0.3)
+
+        # 2. Domain Authority
+        # Planning Agent owns long-term plant actions
+        final_plant_action = p.plant_action
+        # Market Agent owns Demand Response and Trading
+        final_dr_mw = m.demand_response_mw
+        
+        # Dispatch Agent owns Battery and Emergency systems
+        final_battery_mode = d.battery_mode
+        final_emergency_boost = d.emergency_coal_boost
+
+        final_action = EnergyGridAction(
+            coal_delta=merged_coal_delta,
+            hydro_delta=merged_hydro_delta,
+            nuclear_delta=merged_nuclear_delta,
+            battery_mode=final_battery_mode,
+            emergency_coal_boost=final_emergency_boost,
+            plant_action=final_plant_action,
+            demand_response_mw=final_dr_mw,
+            reroute_transmission=d.reroute_transmission,
+            scheduled_dr_mw=m.scheduled_dr_mw,
+            scheduled_dr_start=m.scheduled_dr_start,
+            scheduled_dr_duration=m.scheduled_dr_duration,
+        )
+
+        return self._safety_override(final_action, d)
+
+    def _safety_override(self, merged: EnergyGridAction, dispatch: EnergyGridAction) -> EnergyGridAction:
+        """
+        Dispatch Veto System: Overrides merged action if grid stability is at risk.
+        """
+        sim = self._sim
+        
+        # If frequency is critical, ignore Market influence and use Dispatch's safety delta
+        if sim.frequency.frequency < 49.8 or sim.frequency.frequency > 50.2:
+            merged.coal_delta = dispatch.coal_delta
+            merged.hydro_delta = dispatch.hydro_delta
+            merged.emergency_coal_boost = dispatch.emergency_coal_boost
+            # Signal the override in the thought field for training data
+            merged.thought = f"[SYSTEM] Dispatch safety override triggered (Freq: {sim.frequency.frequency:.2f}Hz)"
+            
+        return merged
 
     # ------------------------------------------------------------------
     # Reward decomposition
@@ -852,10 +891,8 @@ class EnergyGridEnvironment(Environment):
             spot_price=round(result.get("spot_price", 1.0), 3),
             carbon_price_per_ton=round(result.get("carbon_price_per_ton", 45.0), 2),
             rate_of_change_hz_per_step=round(result.get("rate_of_change_hz_per_step", 0.0), 4),
-            duck_curve_stress=result.get("duck_curve_stress", 0.0),
-            voltage_stability_index=result.get("voltage_stability_index", 100.0),
-            spot_price=result.get("spot_price", 1.0),
-            anomaly_score=result.get("anomaly_score", 0.0),
+            voltage_stability_index=round(result.get("voltage_stability_index", 100.0), 2),
+            anomaly_score=round(result.get("anomaly_score", 0.0), 4),
         )
 
         # Apply per-agent corruption

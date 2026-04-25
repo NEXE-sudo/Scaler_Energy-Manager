@@ -26,6 +26,8 @@ OBS_KEYS = [
     "coal_health_pct", "duck_curve_stress_mw_per_step",
     "spot_price", "carbon_price_per_ton", "rate_of_change_hz_per_step",
     "voltage_stability_index",
+    # LLM Strategist Inputs (for Hybrid Architecture)
+    "llm_coal_delta", "llm_hydro_delta", "llm_nuclear_delta", "llm_dr_mw",
 ]
 
 # Action bounds for clipping
@@ -271,3 +273,33 @@ class PPOAgent(nn.Module):
         entropy = cont_dist.entropy().sum(-1) + boost_dist.entropy()
 
         return log_prob, entropy, value
+
+
+class HybridNegotiator:
+    """
+    Orchestrates the LLM Strategist + PPO Executor flow.
+    Used in the 2-round negotiation protocol.
+    """
+    def __init__(self, ppo_agent: PPOAgent, llm_client: Any, model_name: str):
+        self.ppo = ppo_agent
+        self.llm_client = llm_client
+        self.model = model_name
+
+    def get_dispatch_revision(self, obs: Dict[str, Any], proposal: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Takes Round 1 proposal (LLM) and produces Round 2 revision (PPO).
+        """
+        # Inject LLM proposal into observation for PPO
+        obs["llm_coal_delta"] = proposal.get("coal_delta", 0.0)
+        obs["llm_hydro_delta"] = proposal.get("hydro_delta", 0.0)
+        obs["llm_nuclear_delta"] = proposal.get("nuclear_delta", 0.0)
+        obs["llm_dr_mw"] = proposal.get("demand_response_mw", 0.0)
+        
+        obs_np = flatten_obs(obs)
+        action_dict, _, _ = self.ppo.act(obs_np, deterministic=True)
+        
+        # Mark as revision
+        action_dict["proposal_type"] = "revision"
+        action_dict["thought"] = f"[PPO Executor] Refined LLM strategy for stability."
+        
+        return action_dict

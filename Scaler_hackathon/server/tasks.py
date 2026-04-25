@@ -55,6 +55,8 @@ TASKS: Dict[str, Dict[str, Any]] = {
         "capital_budget": 0.0,
         # Coal starting output
         "coal_start_mw": 400.0,
+        "coal_start_price": 1.0,
+        "hydro_start_reservoir_mwh": 600.0,
         # Grader weights — must sum to 1.0
         "grader_weights": {
             "reliability": 0.60,   # % steps demand fully met
@@ -105,6 +107,8 @@ TASKS: Dict[str, Dict[str, Any]] = {
         "battery_start_mwh": 80.0,
         "capital_budget": 0.0,
         "coal_start_mw": 400.0,
+        "coal_start_price": 1.0,
+        "hydro_start_reservoir_mwh": 600.0,
         "grader_weights": {
             "reliability": 0.60,
             "cost_efficiency": 0.30,
@@ -158,6 +162,8 @@ TASKS: Dict[str, Dict[str, Any]] = {
         "battery_start_mwh": 60.0,     # starts at 30% — stressed
         "capital_budget": 2000.0,
         "coal_start_mw": 350.0,
+        "coal_start_price": 1.2,
+        "hydro_start_reservoir_mwh": 400.0,
         "grader_weights": {
             "reliability": 0.40,
             "cost_efficiency": 0.20,

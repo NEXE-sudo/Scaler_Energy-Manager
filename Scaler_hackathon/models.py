@@ -24,6 +24,7 @@ from openenv.core.env_server.types import Action, Observation
 # ---------------------------------------------------------------------------
 
 class PlanningAgentAction(Action):
+    model_config = ConfigDict(extra="ignore")
     """
     Long-horizon capital investment decisions.
 
@@ -61,6 +62,16 @@ class PlanningAgentAction(Action):
         ),
     )
 
+    thought: Optional[str] = Field(
+        default=None,
+        description="Reasoning or negotiation message from the agent."
+    )
+
+    proposal_type: str = Field(
+        default="proposal",
+        description="Phase of negotiation: 'proposal' or 'revision'."
+    )
+
     rationale: Optional[str] = Field(
         default=None,
         description=(
@@ -90,6 +101,7 @@ class PlanningAgentAction(Action):
 # ---------------------------------------------------------------------------
 
 class DispatchAgentAction(Action):
+    model_config = ConfigDict(extra="ignore")
     """
     Real-time dispatchable generation control.
 
@@ -161,6 +173,16 @@ class DispatchAgentAction(Action):
     
     reroute_transmission: bool = False
 
+    thought: Optional[str] = Field(
+        default=None,
+        description="Reasoning or negotiation message from the agent."
+    )
+
+    proposal_type: str = Field(
+        default="proposal",
+        description="Phase of negotiation: 'proposal' or 'revision'."
+    )
+
     @field_validator("battery_mode")
     @classmethod
     def validate_battery_mode(cls, v: str) -> str:
@@ -177,23 +199,14 @@ class DispatchAgentAction(Action):
 # ---------------------------------------------------------------------------
 
 class MarketAgentAction(Action):
+    model_config = ConfigDict(extra="ignore")
     """
     Economic optimization and demand-side management.
-
-    The market agent manages the economic layer of grid operation:
-    voluntary demand reduction (industrial load shedding), coal price
-    negotiation, and grid import/export trading with neighboring grids.
-
-    Rewarded on: cumulative operational cost (minimize), demand
-    response utilization efficiency (maximize DR value per MW),
-    grid trading profit (maximize export revenue - import cost).
-
-    Operates in tension with the dispatch agent: the dispatch agent
-    wants maximum generation headroom, the market agent wants to
-    minimize fuel spend. This tension mirrors real grid operations
-    where the system operator (dispatch) and trading desk (market)
-    have different incentives.
     """
+
+    coal_delta: float = 0.0
+    hydro_delta: float = 0.0
+    nuclear_delta: float = 0.0
 
     scheduled_dr_mw: float = 0.0
     scheduled_dr_start: int = 0
@@ -247,6 +260,16 @@ class MarketAgentAction(Action):
         ),
     )
 
+    thought: Optional[str] = Field(
+        default=None,
+        description="Reasoning or negotiation message from the agent."
+    )
+
+    proposal_type: str = Field(
+        default="proposal",
+        description="Phase of negotiation: 'proposal' or 'revision'."
+    )
+
     @field_validator("scheduled_dr_mw")
     @classmethod
     def validate_scheduled_dr(cls, v):
@@ -265,6 +288,7 @@ class MarketAgentAction(Action):
 # ---------------------------------------------------------------------------
 
 class EnergyGridAction(Action):
+    model_config = ConfigDict(extra="ignore")
     """
     Unified action for single-agent mode (backward compatible).
 
@@ -298,6 +322,9 @@ class EnergyGridAction(Action):
     # Market field
     demand_response_mw: float = Field(default=0.0, ge=0.0, le=150.0,
         description="Voluntary demand reduction (MW). Range: 0–150.")
+
+    thought: Optional[str] = None
+    proposal_type: str = "proposal"
 
     # Phase 3 additions
     reroute_transmission: bool = False
@@ -365,6 +392,8 @@ class EnergyGridAction(Action):
             emergency_coal_boost=dispatch.emergency_coal_boost,
             plant_action=planning.plant_action,
             demand_response_mw=market.demand_response_mw,
+            thought=dispatch.thought,
+            proposal_type=dispatch.proposal_type,
         )
 
 
@@ -428,9 +457,6 @@ class EnergyGridObservation(Observation):
     spinning_reserve_required_mw: float = Field(default=0.0,
         description="Required spinning reserve (MW) based on N-1 contingency criterion. Dynamic.")
 
-    duck_curve_stress: float = 0.0
-    voltage_stability_index: float = 100.0
-    spot_price: float = 1.0
     anomaly_score: float = 0.0
 
     # Events & construction
@@ -452,6 +478,11 @@ class EnergyGridObservation(Observation):
         description="MW currently being imported from neighboring grid.")
     trading_credits: float = Field(default=0.0,
         description="Cumulative grid trading profit/loss.")
+
+    negotiation_history: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Consolidated proposals and thoughts from the previous round."
+    )
 
     # Episode metadata
     episode_ended_early: bool = Field(default=False)

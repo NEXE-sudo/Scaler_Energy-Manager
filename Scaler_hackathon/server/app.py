@@ -39,6 +39,9 @@ except Exception as e:
     raise ImportError("openenv is required. Install with: uv sync") from e
 
 try:
+    from .energy_grid_environment import EnergyGridEnvironment
+    from .tasks import get_tasks_summary, PLANT_BUILD_REFERENCE
+    from .grader import grade_result_to_dict
     from ..models import (
         EnergyGridAction,
         EnergyGridObservation,
@@ -46,10 +49,10 @@ try:
         DispatchAgentAction,
         MarketAgentAction,
     )
-    from .energy_grid_environment import EnergyGridEnvironment
-    from .tasks import get_tasks_summary, PLANT_BUILD_REFERENCE
-    from .grader import grade_result_to_dict
-except (ImportError, ModuleNotFoundError):
+except (ImportError, ModuleNotFoundError, ValueError):
+    from server.energy_grid_environment import EnergyGridEnvironment
+    from server.tasks import get_tasks_summary, PLANT_BUILD_REFERENCE
+    from server.grader import grade_result_to_dict
     from models import (
         EnergyGridAction,
         EnergyGridObservation,
@@ -57,9 +60,6 @@ except (ImportError, ModuleNotFoundError):
         DispatchAgentAction,
         MarketAgentAction,
     )
-    from server.energy_grid_environment import EnergyGridEnvironment
-    from server.tasks import get_tasks_summary, PLANT_BUILD_REFERENCE
-    from server.grader import grade_result_to_dict
 
 
 # ---------------------------------------------------------------------------
