@@ -284,10 +284,17 @@ def main():
     parser.add_argument("--quiet",    action="store_true")
     args = parser.parse_args()
 
+    # Resolve output path relative to project root (parent of Scaler_hackathon)
+    output_path = Path(args.output)
+    if not output_path.is_absolute():
+        # If relative path, save to project root
+        project_root = ROOT.parent
+        output_path = project_root / output_path
+
     generate_dataset(
         task_ids   = args.tasks,
         n_episodes = args.episodes,
-        output_path = Path(args.output),
+        output_path = output_path,
         verbose    = not args.quiet,
     )
 

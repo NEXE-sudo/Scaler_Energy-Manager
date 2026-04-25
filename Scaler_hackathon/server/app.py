@@ -22,9 +22,6 @@ Additional endpoints (unchanged):
 
 from __future__ import annotations
 
-import gradio as gr
-import subprocess
-
 import asyncio
 import json
 import os
@@ -34,6 +31,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 try:
@@ -77,6 +75,23 @@ app: FastAPI = create_app(
     max_concurrent_envs=4,
 )
 
+# Add CORS middleware to allow frontend requests
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:8080",      # Frontend dev server
+        "http://127.0.0.1:8080",
+        "http://localhost:3000",       # Alternative dev port
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",       # Vite default
+        "http://127.0.0.1:5173",
+        "*",                           # Allow all origins in development
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # ---------------------------------------------------------------------------
 # Request models
 # ---------------------------------------------------------------------------
@@ -112,23 +127,6 @@ def get_http_env() -> EnergyGridEnvironment:
             )
     return _http_env
 
-def run_training():
-    result = subprocess.run(
-        ["python", "train_llm.py", "--max-steps", "200"],
-        capture_output=True,
-        text=True
-    )
-    return result.stdout[-2000:]  # show last logs
-
-demo = gr.Interface(
-    fn=run_training,
-    inputs=[],
-    outputs="text",
-    title="Train Model"
-)
-
-demo.launch()
-
 # ---------------------------------------------------------------------------
 # Original endpoints (unchanged)
 # ---------------------------------------------------------------------------
@@ -136,6 +134,59 @@ demo.launch()
 @app.get("/reset", include_in_schema=False)
 async def reset_ping() -> JSONResponse:
     return JSONResponse(content={"status": "ok"})
+
+
+@app.post("/reset", tags=["OpenEnv Extensions"])
+async def reset_episode(request: ResetRequest = ResetRequest()) -> JSONResponse:
+    """
+    Reset the environment to start a new episode.
+    
+    Request body:
+        {"task_id": "easy|medium|hard"}
+    
+    Returns the initial observation for the task.
+    """
+    try:
+        env = get_http_env()
+        obs = env.reset(request.task_id)
+        return JSONResponse(content=obs.model_dump())
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to reset environment for task {request.task_id}: {str(e)}"
+        )
+
+
+@app.get("/state", tags=["OpenEnv Extensions"])
+async def get_state() -> JSONResponse:
+    """Get current environment state/observation."""
+    try:
+        env = get_http_env()
+        if env._sim is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Environment not initialized. Call POST /reset first."
+            )
+        obs = env.get_observation()
+        return JSONResponse(content=obs.model_dump())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/schema", tags=["OpenEnv Extensions"])
+async def get_schema() -> JSONResponse:
+    """Get environment schema/metadata."""
+    try:
+        env = get_http_env()
+        return JSONResponse(content={
+            "action_space": "EnergyGridAction",
+            "observation_space": "EnergyGridObservation",
+            "tasks": ["easy", "medium", "hard"],
+            "multi_agent": True,
+            "agents": ["planning", "dispatch", "market"]
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/tasks", tags=["OpenEnv Extensions"])
@@ -167,6 +218,31 @@ async def grade_episode(request: GraderRequest = GraderRequest()) -> JSONRespons
 
     return JSONResponse(content=grade)
 
+@app.post("/train")
+async def train_model():
+    import subprocess
+    import os
+
+    try:
+        result = subprocess.run(
+            ["python", "train_llm.py", "--max-steps", "100"],
+            cwd=os.getcwd(),
+            capture_output=True,
+            text=True
+        )
+
+        return {
+            "status": "completed",
+            "returncode": result.returncode,
+            "stdout": result.stdout[-2000:],
+            "stderr": result.stderr[-2000:]
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
 
 @app.post("/baseline", tags=["OpenEnv Extensions"])
 async def run_baseline(request: BaselineRequest = BaselineRequest()) -> JSONResponse:

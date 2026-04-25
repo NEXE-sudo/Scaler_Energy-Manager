@@ -30,6 +30,8 @@ import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import warnings
+warnings.filterwarnings("ignore")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Config
@@ -39,7 +41,7 @@ DEFAULTS = {
     "model":           "mistralai/Mistral-7B-Instruct-v0.2",
     "output_dir":      "./lora_energy_grid",
     "dataset":         "dataset_clean.jsonl",
-    "max_seq_length":  1024,
+    "max_seq_length":  2048,
     # LoRA
     "lora_r":          16,
     "lora_alpha":      32,

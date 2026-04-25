@@ -20,6 +20,12 @@ dependencies = [
 
     # Environment variable loading (.env file support — cross-platform)
     "python-dotenv>=1.0.0",
+
+    "torch==2.2.2",
+    "transformers==4.36.2",
+    "peft==0.7.1",
+    "accelerate",
+    "datasets"
 ]
 
 [project.optional-dependencies]
