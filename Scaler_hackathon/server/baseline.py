@@ -233,7 +233,9 @@ def _build_system_prompt(
     plan: str = "",
     step: int = 0,
     obs_dict: dict = None,
-    agent_type: str = "unified"
+    agent_type: str = "planning"
+"dispatch"
+"market"
 ) -> str:
     """
     Build system prompt for LLM.

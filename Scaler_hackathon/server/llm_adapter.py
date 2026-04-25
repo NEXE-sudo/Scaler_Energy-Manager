@@ -11,8 +11,6 @@ import json
 import re
 from typing import Any, Dict, Optional
 
-from Scaler_hackathon.server.train import _dict_to_action
-
 # Action bounds (same as ppo_agent.py for consistency)
 ACTION_BOUNDS = {
     "coal_delta": (-100.0, 100.0),

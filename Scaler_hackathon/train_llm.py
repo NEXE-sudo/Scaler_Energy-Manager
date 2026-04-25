@@ -16,7 +16,7 @@ Usage:
     python train_llm.py --dataset dataset_clean.jsonl --use-unsloth
 
     # Override model
-    python train_llm.py --model meta-llama/Meta-Llama-3-8B-Instruct
+    python train_llm.py --model mistralai/Mistral-7B-Instruct-v0.2
 
 Requirements (install in Colab):
     pip install transformers trl peft accelerate bitsandbytes datasets
@@ -24,6 +24,7 @@ Requirements (install in Colab):
 """
 
 import argparse
+import torch
 import json
 import os
 import sys
@@ -35,7 +36,7 @@ from typing import Any, Dict, List, Optional
 # ─────────────────────────────────────────────────────────────────────────────
 
 DEFAULTS = {
-    "model":           "meta-llama/Meta-Llama-3-8B-Instruct",
+    "model":           "mistralai/Mistral-7B-Instruct-v0.2",
     "output_dir":      "./lora_energy_grid",
     "dataset":         "dataset_clean.jsonl",
     "max_seq_length":  1024,
@@ -54,7 +55,7 @@ DEFAULTS = {
     "save_steps":      100,
     "logging_steps":   10,
     # Efficiency
-    "load_in_4bit":    True,
+    "load_in_4bit":    False,
     "dtype":           "float16",  # bfloat16 on A100, float16 on T4
     "gradient_checkpointing": True,
 }
@@ -62,6 +63,16 @@ DEFAULTS = {
 # Template used by DataCollatorForCompletionOnlyLM to identify response start
 RESPONSE_TEMPLATE = "<|assistant|>\n"
 
+def detect_device():
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+def resolve_device(arg_device: str) -> str:
+    import torch
+    if arg_device == "cpu":
+        return "cpu"
+    if arg_device == "cuda":
+        return "cuda"
+    return "cuda" if torch.cuda.is_available() else "cpu"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Dataset loading
@@ -96,31 +107,19 @@ def formatting_func(example: Dict[str, str]) -> str:
     """
     return example["prompt"] + example["completion"]
 
+device = detect_device()
+print(f"Detected device: {device}")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Standard HuggingFace training path
 # ─────────────────────────────────────────────────────────────────────────────
 
-def train_standard(cfg: Dict[str, Any], dataset) -> None:
-    """Train using transformers + trl + peft (no Unsloth dependency)."""
+def load_model_and_tokenizer(cfg: dict, device: str):
     import torch
-    from transformers import (
-        AutoModelForCausalLM,
-        AutoTokenizer,
-        BitsAndBytesConfig,
-        TrainingArguments,
-    )
-    from peft import LoraConfig, TaskType, get_peft_model
-    try:
-        from trl import SFTTrainer, DataCollatorForCompletionOnlyLM
-    except ImportError:
-        from trl.trainer import SFTTrainer, DataCollatorForCompletionOnlyLM
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
-    print(f"\nLoading model: {cfg['model']}")
-
-    # 4-bit quantisation for low-VRAM training
     bnb_config = None
-    if cfg["load_in_4bit"]:
+    if cfg["load_in_4bit"] and device == "cuda":
         bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
@@ -131,76 +130,102 @@ def train_standard(cfg: Dict[str, Any], dataset) -> None:
     model = AutoModelForCausalLM.from_pretrained(
         cfg["model"],
         quantization_config=bnb_config,
-        device_map="auto",
+        device_map="auto" if device == "cuda" else None,
+        torch_dtype=torch.float16 if device == "cuda" else torch.float32,
         trust_remote_code=True,
     )
-    model.config.use_cache = False  # Required for gradient checkpointing
+
+    if device == "cpu":
+        model.to("cpu")
+
+    model.config.use_cache = False
 
     tokenizer = AutoTokenizer.from_pretrained(cfg["model"], trust_remote_code=True)
-    tokenizer.pad_token     = tokenizer.eos_token
-    tokenizer.padding_side  = "right"
+    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "right"
+
+    return model, tokenizer
+
+def train_standard(cfg: dict, dataset, device: str) -> None:
+    """Train using transformers + trl + peft (CPU/GPU safe)."""
+
+    import torch
+    from transformers import TrainingArguments
+    from peft import LoraConfig, TaskType, get_peft_model
+
+    try:
+        from trl import SFTTrainer, DataCollatorForCompletionOnlyLM
+    except ImportError:
+        from trl.trainer import SFTTrainer, DataCollatorForCompletionOnlyLM
+
+    print(f"\nLoading model: {cfg['model']}")
+
+    # Load model + tokenizer safely
+    model, tokenizer = load_model_and_tokenizer(cfg, device)
 
     # LoRA config
     lora_config = LoraConfig(
-        task_type     = TaskType.CAUSAL_LM,
-        r             = cfg["lora_r"],
-        lora_alpha    = cfg["lora_alpha"],
-        lora_dropout  = cfg["lora_dropout"],
-        target_modules = cfg["lora_targets"],
-        bias          = "none",
+        task_type=TaskType.CAUSAL_LM,
+        r=cfg["lora_r"],
+        lora_alpha=cfg["lora_alpha"],
+        lora_dropout=cfg["lora_dropout"],
+        target_modules=cfg["lora_targets"],
+        bias="none",
     )
 
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
 
-    # Collator — trains ONLY on completion tokens (not the prompt)
+    # Train only on completion tokens
     collator = DataCollatorForCompletionOnlyLM(
-        response_template = RESPONSE_TEMPLATE,
-        tokenizer         = tokenizer,
+        response_template=RESPONSE_TEMPLATE,
+        tokenizer=tokenizer,
     )
 
+    # Training arguments
     training_args = TrainingArguments(
-        output_dir              = cfg["output_dir"],
-        num_train_epochs        = cfg["epochs"],
-        per_device_train_batch_size = cfg["batch_size"],
-        gradient_accumulation_steps = cfg["grad_accum"],
-        learning_rate           = cfg["lr"],
-        warmup_steps            = cfg["warmup_steps"],
-        max_steps               = cfg["max_steps"] if cfg["max_steps"] > 0 else -1,
-        fp16                    = (cfg["dtype"] == "float16"),
-        bf16                    = (cfg["dtype"] == "bfloat16"),
-        gradient_checkpointing  = cfg["gradient_checkpointing"],
-        logging_steps           = cfg["logging_steps"],
-        save_steps              = cfg["save_steps"],
-        save_total_limit        = 2,
-        report_to               = "none",
-        dataloader_num_workers  = 0,
+        output_dir=cfg["output_dir"],
+        num_train_epochs=cfg["epochs"],
+        per_device_train_batch_size=cfg["batch_size"],
+        gradient_accumulation_steps=cfg["grad_accum"],
+        learning_rate=cfg["lr"],
+        warmup_steps=cfg["warmup_steps"],
+        max_steps=cfg["max_steps"] if cfg["max_steps"] > 0 else -1,
+        fp16=(cfg["dtype"] == "float16" and device == "cuda"),
+        bf16=(cfg["dtype"] == "bfloat16" and device == "cuda"),
+        gradient_checkpointing=cfg["gradient_checkpointing"],
+        logging_steps=cfg["logging_steps"],
+        save_steps=cfg["save_steps"],
+        save_total_limit=2,
+        report_to="none",
+        dataloader_num_workers=0,
     )
 
+    # Trainer
     trainer = SFTTrainer(
-        model             = model,
-        tokenizer         = tokenizer,
-        train_dataset     = dataset,
-        formatting_func   = formatting_func,
-        data_collator     = collator,
-        max_seq_length    = cfg["max_seq_length"],
-        args              = training_args,
+        model=model,
+        tokenizer=tokenizer,
+        train_dataset=dataset,
+        formatting_func=formatting_func,
+        data_collator=collator,
+        max_seq_length=cfg["max_seq_length"],
+        args=training_args,
     )
 
     print("\nStarting training...")
     trainer.train()
 
-    # Save LoRA adapter weights
+    # Save LoRA weights
     model.save_pretrained(cfg["output_dir"])
     tokenizer.save_pretrained(cfg["output_dir"])
-    print(f"\n[✓] Model saved to {cfg['output_dir']}")
 
+    print(f"\n[✓] Model saved to {cfg['output_dir']}")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Unsloth training path (faster, lower VRAM)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def train_unsloth(cfg: Dict[str, Any], dataset) -> None:
+def train_unsloth(cfg: Dict[str, Any], dataset, device) -> None:
     """Train using Unsloth for 2x speed and ~50% lower VRAM."""
     try:
         from unsloth import FastLanguageModel
@@ -209,7 +234,7 @@ def train_unsloth(cfg: Dict[str, Any], dataset) -> None:
     except ImportError:
         print("Unsloth not installed. Run: pip install unsloth")
         print("Falling back to standard training...")
-        train_standard(cfg, dataset)
+        train_standard(cfg, dataset, device)
         return
 
     import torch
@@ -296,7 +321,31 @@ def main():
     parser.add_argument("--dtype",       type=str, default=DEFAULTS["dtype"],
                         choices=["float16", "bfloat16"])
     parser.add_argument("--batch-size",  type=int, default=DEFAULTS["batch_size"])
+    parser.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
     args = parser.parse_args()
+    
+    def apply_hardware_config(cfg: dict, device: str, user_model: str, default_model: str) -> dict:
+        """
+        Adjust config safely based on hardware.
+        Only overrides model if user did NOT explicitly set one.
+        """
+        if device == "cpu" and user_model == default_model:
+            print("Switching to CPU-safe config")
+
+            cfg["model"] = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+            cfg["load_in_4bit"] = False
+            cfg["batch_size"] = 1
+            cfg["grad_accum"] = 1
+            cfg["gradient_checkpointing"] = False
+
+        return cfg
+    
+    if args.device == "cpu":
+        device = "cpu"
+    elif args.device == "cuda":
+        device = "cuda"
+    else:
+        device = detect_device()
 
     cfg = {**DEFAULTS}
     cfg["model"]       = args.model
@@ -307,7 +356,9 @@ def main():
     cfg["max_steps"]   = args.max_steps
     cfg["lora_r"]      = args.lora_r
     cfg["load_in_4bit"] = not args.no_4bit
-    cfg["dtype"]       = args.dtype
+    cfg["dtype"] = args.dtype
+
+    cfg = apply_hardware_config(cfg, device, args.model, DEFAULTS["model"])
 
     print(f"Model      : {cfg['model']}")
     print(f"Dataset    : {args.dataset}")
@@ -328,9 +379,9 @@ def main():
 
     # Train
     if args.use_unsloth:
-        train_unsloth(cfg, dataset)
+        train_unsloth(cfg, dataset, device)
     else:
-        train_standard(cfg, dataset)
+        train_standard(cfg, dataset, device)
 
 
 if __name__ == "__main__":

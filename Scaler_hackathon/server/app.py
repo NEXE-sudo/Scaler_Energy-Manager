@@ -22,6 +22,9 @@ Additional endpoints (unchanged):
 
 from __future__ import annotations
 
+import gradio as gr
+import subprocess
+
 import asyncio
 import json
 import os
@@ -109,6 +112,22 @@ def get_http_env() -> EnergyGridEnvironment:
             )
     return _http_env
 
+def run_training():
+    result = subprocess.run(
+        ["python", "train_llm.py", "--max-steps", "200"],
+        capture_output=True,
+        text=True
+    )
+    return result.stdout[-2000:]  # show last logs
+
+demo = gr.Interface(
+    fn=run_training,
+    inputs=[],
+    outputs="text",
+    title="Train Model"
+)
+
+demo.launch()
 
 # ---------------------------------------------------------------------------
 # Original endpoints (unchanged)
