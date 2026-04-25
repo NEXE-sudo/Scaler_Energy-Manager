@@ -39,7 +39,6 @@ from server.baseline import (
     _build_planner_prompt,
     _parse_action,
     _call_llm_with_retry,
-    PLANNING_MAX_TOKENS,
 )
 from server.energy_grid_environment import EnergyGridEnvironment
 from server.tasks import get_task, TASK_ORDER
@@ -63,6 +62,17 @@ def obs_to_prompt_text(obs: EnergyGridObservation, task_id: str) -> str:
     obs_dict = obs.model_dump() if hasattr(obs, "model_dump") else obs
     return observation_to_text(obs_dict)
 
+def format_response(response_text: str) -> str:
+    if not response_text or not response_text.strip():
+        return ""
+
+    if "Thought:" not in response_text:
+        return ""
+
+    if "Action:" not in response_text:
+        return ""
+
+    return response_text.strip()
 
 def run_episode_with_collection(
     env: EnergyGridEnvironment,
@@ -163,6 +173,11 @@ def run_episode_with_collection(
                     verbose=verbose, agent_type=agent_type
                 )
                 
+                response_text = format_response(response_text)
+
+                if not response_text:
+                    continue
+                
                 # Task 7: Failsafe for empty response
                 if not response_text or not response_text.strip():
                     unified_action = EnergyGridAction()
@@ -243,7 +258,6 @@ def generate_dataset(
                         system="You are a strategic planner. Output a concise operational plan only.",
                         messages=[{"role": "user", "content": _build_planner_prompt(obs_init)}],
                         max_retries=2,
-                        max_tokens=PLANNING_MAX_TOKENS,
                         verbose=verbose,
                         agent_type="planning"
                     )

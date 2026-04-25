@@ -109,11 +109,24 @@ def is_valid_action(action_dict: Optional[Dict[str, Any]], agent_type: str = "un
 
 
 def is_valid_response(response: str, agent_type: str = "unified") -> bool:
-    """Return True if response is non-empty and contains a parseable action."""
     if not response or not response.strip():
         return False
+
+    if "Thought:" not in response:
+        return False
+
+    if "Action:" not in response:
+        return False
+
     parsed = _extract_json_block(response)
-    return is_valid_action(parsed, agent_type)
+
+    if parsed is None:
+        return False
+
+    if not is_valid_action(parsed, agent_type):
+        return False
+
+    return True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -189,41 +202,37 @@ def filter_dataset(
 # TRL format conversion
 # ─────────────────────────────────────────────────────────────────────────────
 
-def format_for_trl(record: Dict[str, Any]) -> Dict[str, str]:
-    """
-    Convert a raw record into TRL SFTTrainer format.
-
-    The 'prompt' field combines system + user text separated by a clear delimiter.
-    The 'completion' field is the raw LLM response (Thought + Action JSON).
-
-    TRL's SFTTrainer will train on completion tokens only when using
-    DataCollatorForCompletionOnlyLM with the response template.
-    """
+def format_for_trl(record):
     system_text = record.get("system", "").strip()
-    user_text   = record.get("prompt", "").strip()
-    agent_type  = record.get("agent", "operator")
-    phase       = record.get("phase", "proposal")
+    user_text = record.get("prompt", "").strip()
+    agent_type = record.get("agent", "operator")
+    phase = record.get("phase", "proposal")
 
-    # Inject agent identity if not in system text
     identity = f" [Agent: {agent_type.upper()} | Phase: {phase.upper()}]"
-    
-    # Format as a clean chat-style prompt
+
     if system_text:
-        full_prompt = f"<|system|>\n{system_text}\n<|user|>\n{identity}\n{user_text}\n<|assistant|>\n"
+        prompt = f"<|system|>\n{system_text}\n<|user|>\n{identity}\n{user_text}\n<|assistant|>\n"
     else:
-        full_prompt = f"<|user|>\n{identity}\n{user_text}\n<|assistant|>\n"
+        prompt = f"<|user|>\n{identity}\n{user_text}\n<|assistant|>\n"
 
     completion = record.get("response", "").strip()
 
+    # 🔥 STRICT FINAL CHECK
+    if "Thought:" not in completion or "Action:" not in completion:
+        return None
+
     return {
-        "prompt":     full_prompt,
-        "completion": completion,
+        "prompt": prompt,
+        "completion": completion
     }
 
-
-def build_trl_dataset(filtered_records: List[Dict[str, Any]]) -> List[Dict[str, str]]:
-    """Convert all filtered records to TRL format."""
-    return [format_for_trl(r) for r in filtered_records]
+def build_trl_dataset(filtered_records):
+    cleaned = []
+    for r in filtered_records:
+        item = format_for_trl(r)
+        if item is not None:
+            cleaned.append(item)
+    return cleaned
 
 
 # ─────────────────────────────────────────────────────────────────────────────

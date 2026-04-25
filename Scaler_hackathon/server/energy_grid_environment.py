@@ -292,64 +292,46 @@ class EnergyGridEnvironment(Environment):
 # ---------------------------------------------------------------------------
 
     def _filter_observation_for_agent(self, obs, agent_type: str):
-        data = obs.model_dump()
+        """
+        Returns a filtered observation for a specific agent,
+        while preserving full schema integrity.
+        """
+
+        obs_dict = obs.model_dump()
 
         if agent_type == "planning":
             allowed = [
-                "demand_mw",
-                "hour",
-                "day",
-                "season",
-                "coal_price",
-                "capital_budget",
-                "cumulative_cost",
-                "cumulative_emissions_tons",
+                "demand_mw", "supply_mw", "frequency_hz",
+                "reserve_margin_mw", "current_step", "day",
+                "weather_factor", "risk_level"
             ]
 
         elif agent_type == "dispatch":
             allowed = [
-                "demand_mw",
-                "coal_mw",
-                "solar_mw",
-                "wind_mw",
-                "hydro_mw",
-                "nuclear_mw",
-                "battery_mwh",
-                "frequency_hz",
-                "load_shedding_mw",
-                "spinning_reserve_mw",
-                "duck_curve_stress",
-                "voltage_stability_index",
-                "anomaly_score",
+                "demand_mw", "supply_mw", "frequency_hz",
+                "reserve_margin_mw", "battery_soc",
+                "battery_power_mw", "current_step"
             ]
 
         elif agent_type == "market":
             allowed = [
-                "demand_mw",
-                "coal_price",
-                "spot_price",
-                "grid_export_mw",
-                "grid_import_mw",
-                "trading_credits",
+                "demand_mw", "supply_mw", "frequency_hz",
+                "reserve_margin_mw", "market_price",
+                "current_step"
             ]
 
         else:
             return obs
 
-        # Always allow negotiation history to pass through
-        allowed.append("negotiation_history")
-        allowed.append("reward")
-        allowed.append("done")
+        # Extract filtered subset
+        filtered = {k: obs_dict[k] for k in allowed if k in obs_dict}
 
-        filtered = {k: data[k] for k in allowed if k in data}
+        # 🔥 CRITICAL FIX: merge with original to preserve schema
+        base = obs.model_dump()
+        base.update(filtered)
 
-        filtered_obs = type(obs)(**filtered)
-
-        # Apply FDI AFTER filtering
-        filtered_obs = self._apply_fdi(filtered_obs, agent_type)
-
-        return filtered_obs
-
+        return type(obs)(**base)
+    
     def _apply_fdi(self, obs: EnergyGridObservation, agent_type: str) -> EnergyGridObservation:
         """
         Apply False Data Injection (FDI) attack to observation.
@@ -894,10 +876,6 @@ class EnergyGridEnvironment(Environment):
             voltage_stability_index=round(result.get("voltage_stability_index", 100.0), 2),
             anomaly_score=round(result.get("anomaly_score", 0.0), 4),
         )
-
-        # Apply per-agent corruption
-        if "fdi_attack" in self._sim.active_events:
-            obs = self._apply_fdi(obs, agent_type)
 
         if self._normalize:
             obs_dict = obs.model_dump()

@@ -233,9 +233,7 @@ def _build_system_prompt(
     plan: str = "",
     step: int = 0,
     obs_dict: dict = None,
-    agent_type: str = "planning"
-"dispatch"
-"market"
+    agent_type: str = "dispatch",
 ) -> str:
     """
     Build system prompt for LLM.
@@ -679,95 +677,38 @@ def run_task(
 # ---------------------------------------------------------------------------
 
 def _call_llm_with_retry(
-    client: OpenAI,
-    model: str,
-    system: str,
-    messages: list,
-    max_retries: int = 3,
-    agent_type: str = "dispatch",
-    verbose: bool = True
-) -> str:
+    client,
+    model,
+    system,
+    messages,
+    max_retries=3,
+    agent_type="dispatch",
+    verbose=True,
+):
     """
-    Call LLM with tiered model routing and retries.
+    Calls LLM with retries. Uses agent_type to select model.
     """
-    # Override model based on agent_type
-    target_model = PLANNING_MODEL if agent_type == "planning" else FAST_MODEL
-    max_tokens   = PLANNING_MAX_TOKENS if agent_type == "planning" else FAST_MAX_TOKENS
-    
+
+    target_model = model  # 🔥 FIX: do NOT override
+
     for attempt in range(max_retries):
         try:
-            _rate_limited_sleep(verbose=verbose)
             response = client.chat.completions.create(
                 model=target_model,
-                messages=[{"role": "system", "content": system}] + messages,
-                max_tokens=max_tokens,
-                temperature=0.1
+                messages=[
+                    {"role": "system", "content": system},
+                    *messages
+                ],
+                temperature=0.2,
             )
-            # Extract the assistant's content
-            content = response.choices[0].message.content or ""
-            
-            # If content is empty but reasoning exists, use reasoning as the response
-            if not content.strip() and hasattr(response.choices[0].message, 'reasoning'):
-                reasoning = response.choices[0].message.reasoning or ""
-                if reasoning.strip():
-                    content = reasoning
-                    if verbose:
-                        print(f"  [DEBUG] Using reasoning field ({len(reasoning)} chars) - finish_reason='{response.choices[0].finish_reason}'")
-            
-            # ✅ PRINT TOKENS FIRST (before any validation checks)
-            # This ensures we see token usage even if content is empty/invalid
-            if verbose and hasattr(response, "usage"):
-                usage = response.usage
-                print(
-                    f"  [DEBUG] Tokens - prompt:{usage.prompt_tokens} "
-                    f"completion:{usage.completion_tokens} total:{usage.total_tokens}"
-                )
-            
-            # DEBUG: If content is still empty, log raw response
-            if not content.strip() and verbose:
-                print(f"  [DEBUG] Raw response choices[0]: {response.choices[0]}")
-                print(f"  [DEBUG] Content value: {repr(content)}")
-            
-            # ✅ NOW validate content (after logging tokens)
-            if not content.strip():
-                raise ValueError("Empty response from model — possible TPM burst")
-                    
-            return content
+
+            return response.choices[0].message.content
 
         except Exception as e:
-            err = str(e).lower()
+            if attempt == max_retries - 1:
+                raise e
+            time.sleep(1)
             
-            # ✅ ALSO PRINT TOKENS IN ERROR PATH if we got a response
-            # This shows token usage even when the response was invalid
-            if verbose and 'response' in locals() and hasattr(response, "usage"):
-                usage = response.usage
-                print(
-                    f"  [DEBUG] Error path - Tokens - prompt:{usage.prompt_tokens} "
-                    f"completion:{usage.completion_tokens} total:{usage.total_tokens}"
-                )
-            
-            is_rate_limit = "rate" in err or "429" in err or "limit" in err
-
-            if is_rate_limit and attempt < max_retries - 1:
-                wait = 2 ** attempt * 5   # 5s, 10s, 20s
-                if verbose:
-                    print(f"  [RATE LIMIT] Waiting {wait}s before retry {attempt + 1}...")
-                time.sleep(wait)
-                continue
-
-            if attempt < max_retries - 1:
-                wait = 2 ** attempt
-                if verbose:
-                    print(f"  [ERROR] {e}. Retrying in {wait}s...")
-                time.sleep(wait)
-                continue
-
-            # Final failure
-            print(f"  [ERROR] LLM call failed after {max_retries} attempts: {e}")
-            return ""   # parser will fall back to safe default action
-
-    return ""
-
 # ---------------------------------------------------------------------------
 # Main runner (all tasks)
 # ---------------------------------------------------------------------------
