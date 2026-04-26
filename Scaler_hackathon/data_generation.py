@@ -102,7 +102,7 @@ def run_episode_with_collection(
             if agent_type == "planning":
                 from server.baseline import _is_major_event
                 if not _is_major_event(obs, prev_obs) and last_planning_action is not None:
-                    proposals[agent_type] = {"action": action_dict, "response": response_text, "prompt": user_prompt, "system": data["system"], "called": True}
+                    proposals[agent_type] = {"action": action_dict, "response": response_text, "prompt": user_prompt, "system": data.get("system", ""), "called": True}
                     obs_negotiation = env.step_planning(last_planning_action)
                     proposals[agent_type] = {"action": last_planning_action, "called": False, "system": "", "response": "", "prompt": ""}
                     continue
@@ -156,7 +156,7 @@ def run_episode_with_collection(
                 step_records.append({
                     "agent": agent_type, "phase": "proposal", "step": step,
                     "prompt": data["prompt"], "response": data["response"],
-                    "system": data["system"],
+                    "system": data.get("system", ""),
                     "reward": 0.0,
                     "task_id": task_id,
                     "blackout": getattr(obs_negotiation, "episode_ended_early", False)
@@ -225,7 +225,7 @@ def run_episode_with_collection(
                 step_records.append({
                     "agent": agent_type, "phase": "revision", "step": step,
                     "prompt": data["prompt"], "response": data["response"],
-                    "system": data["system"],
+                    "system": data.get("system", ""),
                     "reward": agent_reward, "done": next_obs.done, "task_id": task_id,
                     "blackout": getattr(next_obs, "episode_ended_early", False)
                 })
