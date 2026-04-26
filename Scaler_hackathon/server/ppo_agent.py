@@ -138,9 +138,6 @@ class PPOAgent(nn.Module):
 
     # ── Normalisation (running mean/var) ────────────────────────────────────
     # Simple running stats; updated during trajectory collection.
-    _obs_mean: Optional[torch.Tensor] = None
-    _obs_var:  Optional[torch.Tensor] = None
-    _obs_count: int = 0
 
     def update_obs_stats(self, obs_batch: torch.Tensor) -> None:
         """Welford online update of observation statistics."""
@@ -281,6 +278,10 @@ class HybridNegotiator:
     Used in the 2-round negotiation protocol.
     """
     def __init__(self, ppo_agent: PPOAgent, llm_client: Any, model_name: str):
+        _obs_mean: Optional[torch.Tensor] = None
+        _obs_var:  Optional[torch.Tensor] = None
+        _obs_count: int = 0
+        
         self.ppo = ppo_agent
         self.llm_client = llm_client
         self.model = model_name

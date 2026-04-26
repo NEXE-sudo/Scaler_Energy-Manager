@@ -24,6 +24,7 @@ Requirements (install in Colab):
 """
 
 import argparse
+from tomlkit import item
 import torch
 import os
 import sys
@@ -161,7 +162,6 @@ def train_standard(cfg, dataset, device):
     import torch
     from transformers import TrainingArguments, AutoModelForCausalLM, AutoTokenizer
     from peft import LoraConfig, get_peft_model
-    from trl import SFTTrainer
 
     print("🚀 Starting training pipeline...")
 
@@ -204,8 +204,11 @@ def train_standard(cfg, dataset, device):
 
             if text:
                 merged.append({"text": text})
-
+                
+            else:
+                print(f"[WARN] Skipping record with unrecognised format: {list(item.keys())}")
         return merged
+    
 
     dataset = merge_prompt_completion(dataset)
 
@@ -252,7 +255,7 @@ def train_standard(cfg, dataset, device):
         per_device_train_batch_size=1,
         gradient_accumulation_steps=4,
         num_train_epochs=cfg.get("epochs", 2),
-        max_steps=cfg.get("max_steps", 100),
+        max_steps=cfg.get("max_steps", -1) if cfg.get("max_steps", -1) > 0 else -1,
         logging_steps=1,
         save_strategy="no",
         learning_rate=2e-4,
@@ -459,13 +462,11 @@ def main():
         print("ERROR: No valid records in dataset. Run data_generation.py first.")
         sys.exit(1)
 
-    dataset = records_to_hf_dataset(records)
-
-    # Train
     if args.use_unsloth:
+        dataset = records_to_hf_dataset(records)
         train_unsloth(cfg, dataset, device)
     else:
-        train_standard(cfg, dataset, device)
+        train_standard(cfg, records, device)  # train_standard expects raw list
 
 
 if __name__ == "__main__":

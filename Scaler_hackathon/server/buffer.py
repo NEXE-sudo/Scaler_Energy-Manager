@@ -122,23 +122,16 @@ class RolloutBuffer:
         n = self._size
         indices = np.random.permutation(n)
 
-        obs_t      = torch.tensor(self.obs[:n],       dtype=torch.float32)
-        cont_raw_t = torch.tensor(self.cont_raw[:n],  dtype=torch.float32)
-        boosts_t   = torch.tensor(self.boosts[:n],    dtype=torch.float32)
-        lp_t       = torch.tensor(self.log_probs[:n], dtype=torch.float32)
-        ret_t      = torch.tensor(self.returns[:n],   dtype=torch.float32)
-        adv_t      = torch.tensor(self.advantages[:n],dtype=torch.float32)
+        obs_t      = torch.tensor(self.obs[:n],       dtype=torch.float32).to(self.device)
+        cont_raw_t = torch.tensor(self.cont_raw[:n],  dtype=torch.float32).to(self.device)
+        boosts_t   = torch.tensor(self.boosts[:n],    dtype=torch.float32).to(self.device)
+        lp_t       = torch.tensor(self.log_probs[:n], dtype=torch.float32).to(self.device)
+        ret_t      = torch.tensor(self.returns[:n],   dtype=torch.float32).to(self.device)
+        adv_t      = torch.tensor(self.advantages[:n],dtype=torch.float32).to(self.device)
 
         for start in range(0, n, batch_size):
             idx = indices[start : start + batch_size]
-            yield (
-                obs_t[idx].to(self.device),
-                cont_raw_t[idx].to(self.device),
-                boosts_t[idx].to(self.device),
-                lp_t[idx].to(self.device),
-                ret_t[idx].to(self.device),
-                adv_t[idx].to(self.device),
-            )
+            yield (obs_t[idx], cont_raw_t[idx], boosts_t[idx], lp_t[idx], ret_t[idx], adv_t[idx])
 
     def reset(self) -> None:
         self._ptr  = 0

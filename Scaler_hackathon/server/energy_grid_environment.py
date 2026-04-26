@@ -166,9 +166,22 @@ class StepActionBuffer:
             }
             for k, v in self.proposals.items()
         ]
+        
+    @property
+    def planning(self):
+        return self.revisions.get("planning") or self.proposals.get("planning")
 
+    @property
+    def dispatch(self):
+        return self.revisions.get("dispatch") or self.proposals.get("dispatch")
 
+    @property
+    def market(self):
+        return self.revisions.get("market") or self.proposals.get("market")
 
+    @property
+    def is_complete(self):
+        return self.is_round_complete("revision")
 
 
 # ---------------------------------------------------------------------------
@@ -280,7 +293,10 @@ class EnergyGridEnvironment(Environment):
             task_id=task_id,
         )
         self._sim.step = 0
-        self._sim.day = 1
+        self._sim.day = 1  # already there — but also reset these:
+        self._sim.cumulative_cost = 0.0
+        self._sim.cumulative_emissions = 0.0
+        self._sim.cumulative_feedin_credits = 0.0
         self._last_step_result = result
 
         obs = self._build_observation(reward=0.0, done=False)
@@ -460,9 +476,11 @@ class EnergyGridEnvironment(Environment):
                 return self._advance_multi_agent_step()
         
         else:
-            # Fallback for immediate execution (OpenEnv compliance)
-            unified = self._convert_to_unified(agent_type, action)
-            return self.step(unified)
+            # Unknown proposal_type — treat as proposal to avoid silent step advance
+            action.proposal_type = "proposal"
+            self._action_buffer.proposals[agent_type] = action
+            if action.thought:
+                self._action_buffer.thoughts[agent_type] = action.thought
 
         # Return current observation + negotiation history
         obs = self._last_obs or self._build_observation(reward=0.0, done=False)
@@ -494,7 +512,9 @@ class EnergyGridEnvironment(Environment):
         # Merge actions from all agents
         unified = self._merge_actions()
         revisions = self._action_buffer.revisions
-        p, d, m = revisions["planning"], revisions["dispatch"], revisions["market"]
+        p = revisions.get("planning") or self._action_buffer.proposals.get("planning") or PlanningAgentAction()
+        d = revisions.get("dispatch") or self._action_buffer.proposals.get("dispatch") or DispatchAgentAction()
+        m = revisions.get("market")   or self._action_buffer.proposals.get("market")   or MarketAgentAction()
 
         # ── Grid trading (market agent feature) ──────────────────────
         # Apply import/export BEFORE simulator_step so demand is adjusted
@@ -742,7 +762,8 @@ class EnergyGridEnvironment(Environment):
             task_id=self._episode_log.task_id,
             total_steps=self._episode_log.total_steps,
         )
-        temp_log.steps_logged = list(self._episode_log.steps_logged)
+        import copy
+        temp_log.steps_logged = copy.copy(self._episode_log.steps_logged)
         temp_log.blackout_occurred = self._episode_log.blackout_occurred
         temp_log.early_termination_step = self._episode_log.early_termination_step
         temp_log.initial_capital_budget = self._episode_log.initial_capital_budget

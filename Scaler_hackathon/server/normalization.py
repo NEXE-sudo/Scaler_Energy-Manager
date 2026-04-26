@@ -245,8 +245,8 @@ def normalize_observation(
     if "coal_price" in normalized:
         normalized["coal_price"] = normalize_value(
             normalized["coal_price"],
-            bounds.MIN_PRICE,
-            bounds.MAX_PRICE
+            0.8,   # simulator min
+            2.5,   # simulator max
         )
     
     # ---- Economics ----

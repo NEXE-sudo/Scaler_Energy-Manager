@@ -91,7 +91,7 @@ def run_episode_with_collection(
     records: List[Dict[str, Any]] = []
 
     MAX_STEPS = 20
-    for step in range(min(total_steps, MAX_STEPS)):
+    for step in range(total_steps):
         step_records = []
         
         # --- ROUND 1: PROPOSALS ---
@@ -103,6 +103,7 @@ def run_episode_with_collection(
                 if not _is_major_event(obs, prev_obs) and last_planning_action is not None:
                     proposals[agent_type] = {"action": action_dict, "response": response_text, "prompt": user_prompt, "system": data["system"], "called": True}
                     obs_negotiation = env.step_planning(last_planning_action)
+                    proposals[agent_type] = {"action": last_planning_action, "called": False, "system": ""}
                     continue
 
             model_to_use = model_map.get(agent_type, model_map.get("default", "llama-3.1-8b-instant"))
@@ -274,7 +275,7 @@ def generate_dataset(
                     obs_init = env.reset(task_id)
                     plan_resp = _call_llm_with_retry(
                         client=client,
-                        model=model_map["planning"],
+                        model=model_map.get("planning", model_map.get("default", "llama-3.3-70b-versatile")),
                         system="You are a strategic planner. Output a concise operational plan only.",
                         messages=[{"role": "user", "content": _build_planner_prompt(obs_init)}],
                         max_retries=2,
@@ -296,7 +297,9 @@ def generate_dataset(
                     # Validate before writing: skip empty responses
                     if not rec.get("response") or not rec["response"].strip():
                         continue
-                    if "Thought:" not in rec["response"] or "Action:" not in rec["response"]:
+                    if not rec.get("response", "").strip():
+                        continue
+                    if "Action:" not in rec["response"]:
                         continue
                     fout.write(json.dumps(rec, ensure_ascii=False) + "\n")
                     fout.flush() # Incremental save

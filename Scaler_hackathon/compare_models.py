@@ -15,7 +15,8 @@ import argparse
 import os
 import sys
 import json
-import re
+import matplotlib
+matplotlib.use("Agg")
 
 from server.tasks import TASKS
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
@@ -32,6 +33,8 @@ try:
     load_dotenv(Path(__file__).parent / ".env")
 except ImportError:
     pass
+
+from server.llm_adapter import observation_to_text
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 BASE_MODEL_NAME  = os.getenv("FAST_MODEL", "llama-3.1-8b-instant")
@@ -58,7 +61,7 @@ def run_lora_inference(task_ids):
     from transformers import AutoModelForCausalLM, AutoTokenizer
     from peft import PeftModel
     from server.energy_grid_environment import EnergyGridEnvironment
-    from server.llm_adapter import extract_action_from_llm_output, build_compact_obs
+    from server.llm_adapter import extract_action_from_llm_output, observation_to_text
     from models import EnergyGridAction
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -94,16 +97,11 @@ def run_lora_inference(task_ids):
         rewards_list = []
         step = 0
 
-        # ✅ Clean step mapping (NO TASKS dependency)
-        steps_map = {
-            "easy": 24,
-            "medium": 48,
-            "hard": 72
-        }
-        total_steps = steps_map.get(task_id, 24)
+        from server.tasks import get_task
+        total_steps = get_task(task_id)["total_steps"]
 
         while step < total_steps and not obs.done:
-            obs_text = build_compact_obs(obs)
+            obs_text = observation_to_text(obs.model_dump())
 
             prompt = f"""<|system|>
             You are the Dispatch Agent.
@@ -327,7 +325,15 @@ def plot_comparison(base_results, lora_results, save_path=None):
 def save_rewards(task_id, rewards, prefix="lora"):
     os.makedirs("plots", exist_ok=True)
     path = f"plots/{prefix}_{task_id}_rewards.png"
-    plot_rewards(rewards, f"{prefix.upper()} Rewards - {task_id}", save_path=path)
+    plt.figure()
+    plt.plot(rewards, marker='o')
+    plt.title(f"{prefix.upper()} Rewards - {task_id}")
+    plt.xlabel("Step")
+    plt.ylabel("Reward")
+    plt.grid(True)
+    plt.savefig(path)
+    plt.close()
+    print(f"[Saved] {path}")
     
 # ─── Main ─────────────────────────────────────────────────────────────────────
 def main():

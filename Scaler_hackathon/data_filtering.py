@@ -164,7 +164,7 @@ def filter_dataset(
     # Step 1: Remove empty / invalid responses
     valid = []
     for rec in records:
-        agent_type = rec.get("agent", "unified")
+        agent_type = rec.get("agent", "dispatch")  # dispatch is the most common, unified is too strict
         if not is_valid_response(rec.get("response", ""), agent_type):
             stats["removed_invalid"] += 1
             continue

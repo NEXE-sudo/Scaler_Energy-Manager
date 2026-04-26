@@ -267,7 +267,7 @@ def _build_planner_prompt(obs: "EnergyGridObservation") -> str:
     """
     battery_pct = int(100 * obs.battery_mwh / max(1, obs.battery_capacity_mwh))
 
-    return f"""You are a strategic planner for a 72‑step electricity grid simulation (Hard task, Winter).
+    return f"""You are a strategic planner for a 72‑step electricity grid simulation (Hard task, {obs.season.capitalize()}).
 
 KNOWN CONSTANTS (these are guaranteed facts, not estimates):
 - Winter peak demand ~1100 MW. Coal max = 600 MW → structural deficit ~500 MW → new capacity is REQUIRED.
@@ -503,20 +503,23 @@ def run_task(
         if _is_major_event(obs, prev_obs):
             if verbose: print(f"  [EVENT] Triggering Planning Agent at step {step}")
             sys_p = _build_system_prompt(task_id, plan, step, agent_type="planning")
-            resp_p = _call_llm_with_retry(client, PLANNING_MODEL, sys_p, [{"role": "user", "content": observation_to_text(obs.__dict__)}], agent_type="planning", verbose=verbose)
+            resp_p = _call_llm_with_retry(client, PLANNING_MODEL, sys_p, [{"role": "user", "content": observation_to_text(obs.model_dump())}], agent_type="planning", verbose=verbose)
             last_planning_action = _parse_action(resp_p)
             last_planning_action = _apply_control_layer(last_planning_action, obs)
         
         # 2. Dispatch and Market Proposals (Always called)
         sys_d = _build_system_prompt(task_id, plan, step, agent_type="dispatch")
-        resp_d = _call_llm_with_retry(client, model, sys_d, [{"role": "user", "content": observation_to_text(obs.__dict__)}], agent_type="dispatch", verbose=verbose)
+        resp_d = _call_llm_with_retry(client, model, sys_d, [{"role": "user", "content": observation_to_text(obs.model_dump())}], agent_type="dispatch", verbose=verbose)
         prop_d = _parse_action(resp_d)
         prop_d = _apply_control_layer(prop_d, obs)
 
         sys_m = _build_system_prompt(task_id, plan, step, agent_type="market")
-        resp_m = _call_llm_with_retry(client, model, sys_m, [{"role": "user", "content": observation_to_text(obs.__dict__)}], agent_type="market", verbose=verbose)
+        resp_m = _call_llm_with_retry(client, model, sys_m, [{"role": "user", "content": observation_to_text(obs.model_dump())}], agent_type="market", verbose=verbose)
         prop_m = _parse_action(resp_m)
         prop_m = _apply_control_layer(prop_m, obs)
+
+        rev_d = prop_d
+        rev_m = prop_m
 
         if task_id == "easy":
             # Task 1: Proposal becomes final immediately for easy
@@ -636,9 +639,7 @@ def run_task(
     # --------------------------------------------------------------
     # Grading
     # --------------------------------------------------------------
-    grade = env.get_last_grade()
-    if grade is None:
-        grade = env.grade_current_episode() or {}
+    grade = env.get_last_grade() or env.grade_current_episode() or {}
 
     # Emit structured log: END
     score = grade.get("total_score", 0.0)
@@ -678,6 +679,7 @@ def _call_llm_with_retry(
     system,
     messages,
     max_retries=3,
+    max_tokens=256,
     agent_type="dispatch",
     verbose=True,
 ):
@@ -696,6 +698,7 @@ def _call_llm_with_retry(
                     *messages
                 ],
                 temperature=0.2,
+                max_tokens=max_tokens,
             )
 
             return response.choices[0].message.content

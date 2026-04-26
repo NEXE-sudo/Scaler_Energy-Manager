@@ -195,31 +195,6 @@ def _dict_to_action(data: Dict[str, Any]) -> Dict[str, Any]:
         "coal_price_bid": data.get("coal_price_bid") if data.get("coal_price_bid") is not None else None,
     }
 
-def build_compact_obs(obs):
-    """
-    Converts observation object into compact text prompt.
-    """
-
-    try:
-        return f"""Grid Status:
-    - Demand: {obs.demand_mw}MW | Supply: {obs.supply_mw}MW
-    - Freq: {obs.frequency_hz:.2f}Hz | Reserve: {obs.reserve_margin_mw}/{obs.reserve_margin_mw}MW
-    - Battery: {int(obs.battery_soc * 100)}% | Risk: {getattr(obs, 'risk_level', 'none')}
-    Market: Price={getattr(obs, 'market_price', 1.0):.2f}
-
-    Goal: Maintain 50Hz, avoid blackout."""
-    except Exception:
-            # fallback if object is dict-like
-            d = obs if isinstance(obs, dict) else obs.__dict__
-
-            return f"""Grid Status:
-    - Demand: {d.get('demand_mw')}MW | Supply: {d.get('supply_mw')}MW
-    - Freq: {d.get('frequency_hz')}Hz | Reserve: {d.get('reserve_margin_mw')}MW
-    - Battery: {int(d.get('battery_soc', 0) * 100)}% | Risk: {d.get('risk_level', 'none')}
-    Market: Price={d.get('market_price', 1.0)}
-
-    Goal: Maintain 50Hz, avoid blackout."""
-
 def build_multi_agent_prompt(obs: Dict[str, Any], ask_agent: str = "dispatch") -> str:
     """
     Optional dialogue-style prompt for multi-agent reasoning.

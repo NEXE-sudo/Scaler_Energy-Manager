@@ -148,7 +148,10 @@ def score_cost_efficiency(log: EpisodeLog, task_id: str) -> float:
     Overspending beyond max_expected_cost produces negative scores.
     """
     max_cost = TASKS[task_id]["max_expected_cost"]
-    normalised = log.total_cumulative_cost / max(0.01, max_cost)
+    cost = log.total_cumulative_cost or (
+        log.steps_logged[-1].cumulative_cost if log.steps_logged else 0.0
+    )
+    normalised = cost / max(0.01, max_cost)
     return max(0.0, min(1.0, 1.0 - normalised))
 
 
@@ -188,7 +191,7 @@ def score_reservoir_management(log: EpisodeLog) -> float:
     Rewards keeping reservoir in the 20-80% operating band.
     """
     if not log.steps_logged:
-        return 0.5  # neutral if no hydro data
+        return 0.0  # neutral if no hydro data
 
     scores = []
     for s in log.steps_logged:
@@ -248,10 +251,12 @@ def score_capital_efficiency(log: EpisodeLog) -> float:
     Also rewards finishing with some budget remaining (financial prudence).
     """
     capital_spent = log.initial_capital_budget - log.final_capital_budget
-
+    
     if capital_spent <= 0:
         return 0.0
-
+    if log.blackout_occurred:
+        return 0.0
+    
     reliability = score_reliability(log)
     budget_remaining_pct = log.final_capital_budget / max(1.0, log.initial_capital_budget)
 

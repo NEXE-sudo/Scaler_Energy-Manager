@@ -323,9 +323,6 @@ def compute_duck_curve_stress(state: GridSimState) -> float:
     # Compute delta vs previous step
     stress = net_load - state.prev_net_load_mw
 
-    # Update state for next step
-    state.prev_net_load_mw = net_load
-
     return stress
 
 def compute_required_spinning_reserve(state: 'GridSimState') -> float:
@@ -671,7 +668,7 @@ def step_coal(
     coal_state: CoalState,
     delta_mw: float,
     emergency_boost: bool,
-    state: Optional[GridSimState] = None,
+    state: GridSimState,
 ) -> float:
     """
     Update coal plant output respecting ramp limits, startup sequence,
@@ -1083,6 +1080,7 @@ def apply_event_end(event: str, state: GridSimState) -> None:
         # Otherwise the damage window gets cut short
         if state.coal.boost_damage_steps == 0:
             state.coal.max_mw = COAL_MAX_MW
+            state.coal.output_mw = min(state.coal.output_mw, state.coal.max_mw)
     elif event == "price_spike":
         # Preserve the random walk trend (don't snap back to 1.0)
         # Just cap at max to prevent unbounded growth
@@ -1383,11 +1381,9 @@ def update_coal_price(state: GridSimState, rng: random.Random) -> None:
     Also updates carbon price via random walk (£/ton CO2).
     """
     if "price_spike" in state.active_events:
-        return   # already set by event
+        delta = rng.gauss(0, 0.05)
+        state.coal_price = max(0.8, min(2.5, state.coal_price + delta))
 
-    delta = rng.gauss(0, 0.05)
-    state.coal_price = max(0.8, min(2.5, state.coal_price + delta))
-    
     # Carbon price random walk (realistic market volatility)
     carbon_delta = rng.gauss(0, 2.0)   # £2/ton std dev per step
     state.carbon_price = max(20.0, min(100.0, state.carbon_price + carbon_delta))
@@ -1595,7 +1591,8 @@ def simulator_step(
     state.hydro.output_mw = hydro_out
 
     # 12. Battery
-    passive_supply = solar_out + wind_out + coal_out + hydro_out + nuclear_out
+    passive_supply = coal_out + hydro_out + nuclear_out
+    shortfall = max(0.0, effective_demand - passive_supply - solar_out - wind_out)
     shortfall = max(0.0, effective_demand - passive_supply)
     battery_discharged, battery_charged = step_battery(
         state.battery, battery_mode, shortfall
@@ -1652,12 +1649,15 @@ def simulator_step(
         state.steps_demand_met += 1
 
     duck_curve_stress = compute_duck_curve_stress(state)
+    state.prev_net_load_mw = state.demand_mw - (solar_out + wind_out)
 
     # Voltage stability index (Feature 10)
     voltage_stability_idx = compute_voltage_stability_index(state.coal, state.hydro, state.nuclear, solar_out, wind_out)
     
     required_reserve = compute_required_spinning_reserve(state)
     actual_reserve = _compute_spinning_reserve(state)
+
+    spot_price = compute_spot_price(state, state.coal_price, state.carbon_price, task_id, actual_reserve, required_reserve)
 
     # 17. Reward
     reward = compute_reward(
@@ -1677,7 +1677,8 @@ def simulator_step(
         duck_curve_stress=duck_curve_stress,
         voltage_stability_index=voltage_stability_idx,
         actual_reserve=actual_reserve,
-        required_reserve=required_reserve 
+        required_reserve=required_reserve,
+        spot_price=spot_price,
     )
 
     # 18. Economics & emissions
