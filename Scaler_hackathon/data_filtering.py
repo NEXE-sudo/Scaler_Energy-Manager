@@ -25,6 +25,11 @@ import argparse
 import json
 import re
 import sys
+if sys.stdout.encoding.lower() != 'utf-8':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -128,11 +133,6 @@ def is_valid_response(response: str, agent_type: str = "unified") -> bool:
 
     return True
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Core filtering
-# ─────────────────────────────────────────────────────────────────────────────
-
 def filter_dataset(
     records:     List[Dict[str, Any]],
     reward_threshold: float = 0.0,
@@ -141,6 +141,7 @@ def filter_dataset(
 ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
     """
     Filter records to retain high-quality training samples.
+    Uses _extract_json_block to parse action JSON from responses.
 
     Args:
         records:          raw records from JSONL
@@ -202,24 +203,24 @@ def filter_dataset(
 # TRL format conversion
 # ─────────────────────────────────────────────────────────────────────────────
 
+def clean_response(response):
+    # Remove anything after JSON
+    match = re.search(r"Action:\s*\{.*?\}", response, re.DOTALL)
+    if match:
+        return response[:match.end()]
+    return response
+
 def format_for_trl(record):
     system_text = record.get("system", "").strip()
     user_text = record.get("prompt", "").strip()
-    agent_type = record.get("agent", "operator")
-    phase = record.get("phase", "proposal")
-
-    identity = f" [Agent: {agent_type.upper()} | Phase: {phase.upper()}]"
-
-    if system_text:
-        prompt = f"<|system|>\n{system_text}\n<|user|>\n{identity}\n{user_text}\n<|assistant|>\n"
-    else:
-        prompt = f"<|user|>\n{identity}\n{user_text}\n<|assistant|>\n"
-
     completion = record.get("response", "").strip()
 
-    # 🔥 STRICT FINAL CHECK
+    completion = clean_response(completion)
+
     if "Thought:" not in completion or "Action:" not in completion:
         return None
+
+    prompt = f"<|system|>\n{system_text}\n<|user|>\n{user_text}\n<|assistant|>\n"
 
     return {
         "prompt": prompt,
@@ -241,7 +242,7 @@ def build_trl_dataset(filtered_records):
 
 def load_jsonl(path: Path) -> List[Dict[str, Any]]:
     records = []
-    with open(path) as f:
+    with open(path, "r", encoding="utf-8") as f:
         for line_no, line in enumerate(f, 1):
             line = line.strip()
             if not line:
@@ -255,7 +256,7 @@ def load_jsonl(path: Path) -> List[Dict[str, Any]]:
 
 def save_jsonl(records: List[Dict[str, Any]], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         for rec in records:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 

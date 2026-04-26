@@ -300,37 +300,45 @@ class EnergyGridEnvironment(Environment):
         obs_dict = obs.model_dump()
 
         if agent_type == "planning":
-            allowed = [
-                "demand_mw", "supply_mw", "frequency_hz",
-                "reserve_margin_mw", "current_step", "day",
-                "weather_factor", "risk_level"
-            ]
-
+            allowed = {
+                "demand_mw", "coal_mw", "solar_mw", "wind_mw", "hydro_mw", "nuclear_mw",
+                "step", "day", "season", "capital_budget", "plants_building",
+                "cumulative_emissions_tons", "active_events"
+            }
         elif agent_type == "dispatch":
-            allowed = [
-                "demand_mw", "supply_mw", "frequency_hz",
-                "reserve_margin_mw", "battery_soc",
-                "battery_power_mw", "current_step"
-            ]
-
+            allowed = {
+                "demand_mw", "coal_mw", "solar_mw", "wind_mw", "hydro_mw", "nuclear_mw",
+                "battery_mwh", "battery_capacity_mwh", "frequency_hz", "unmet_demand_mw", 
+                "blackout_risk", "spinning_reserve_mw", "spinning_reserve_required_mw",
+                "step", "hour", "active_events", "duck_curve_stress_mw_per_step",
+                "rate_of_change_hz_per_step", "voltage_stability_index"
+            }
         elif agent_type == "market":
-            allowed = [
-                "demand_mw", "supply_mw", "frequency_hz",
-                "reserve_margin_mw", "market_price",
-                "current_step"
-            ]
-
+            allowed = {
+                "demand_mw", "coal_mw", "solar_mw", "wind_mw", "hydro_mw", "nuclear_mw",
+                "step", "hour", "day", "season", "coal_price", "carbon_price_per_ton",
+                "spot_price", "grid_export_mw", "grid_import_mw", "trading_credits",
+                "cumulative_cost", "active_events", "scheduled_dr_mw"
+            }
         else:
             return obs
 
-        # Extract filtered subset
-        filtered = {k: obs_dict[k] for k in allowed if k in obs_dict}
+        # Create a blank default observation
+        base_obs = type(obs)()
+        base = base_obs.model_dump()
+        
+        # Override with allowed actual values
+        for k in allowed:
+            if k in obs_dict:
+                base[k] = obs_dict[k]
+                
+        # Always include reward, done, task_id, and negotiation_history
+        for k in ["reward", "done", "task_id", "negotiation_history"]:
+            if k in obs_dict and obs_dict[k] is not None:
+                base[k] = obs_dict[k]
 
-        # 🔥 CRITICAL FIX: merge with original to preserve schema
-        base = obs.model_dump()
-        base.update(filtered)
-
-        return type(obs)(**base)
+        filtered_obs = type(obs)(**base)
+        return self._apply_fdi(filtered_obs, agent_type)
     
     def _apply_fdi(self, obs: EnergyGridObservation, agent_type: str) -> EnergyGridObservation:
         """
@@ -567,10 +575,10 @@ class EnergyGridEnvironment(Environment):
         d = revisions.get("dispatch")
         m = revisions.get("market")
 
-        # 1. Weighted Average for generation (Dispatch has more weight for stability)
-        merged_coal_delta = (d.coal_delta * 0.7) + (m.coal_delta * 0.3)
-        merged_hydro_delta = (d.hydro_delta * 0.7) + (m.hydro_delta * 0.3)
-        merged_nuclear_delta = (d.nuclear_delta * 0.7) + (m.nuclear_delta * 0.3)
+        # 1. Dispatch owns Generation
+        merged_coal_delta = d.coal_delta
+        merged_hydro_delta = d.hydro_delta
+        merged_nuclear_delta = d.nuclear_delta
 
         # 2. Domain Authority
         # Planning Agent owns long-term plant actions
@@ -846,6 +854,7 @@ class EnergyGridEnvironment(Environment):
             active_events=list(sim.active_events),
             plants_building=construction_list,
             steps_until_shortfall=result.get("steps_until_shortfall", 999),
+            steps_until_projected_shortfall=result.get("steps_until_shortfall", 999),
             fdi_active="fdi_attack" in self._sim.active_events,
 
             capital_budget=round(sim.capital_budget, 2),

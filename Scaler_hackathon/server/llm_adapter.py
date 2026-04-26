@@ -27,6 +27,9 @@ SAFE_DEFAULT_ACTION = {
     "plant_action": "none",
     "emergency_coal_boost": False,
     "demand_response_mw": 0.0,
+    "grid_export_mw": 0.0,
+    "grid_import_mw": 0.0,
+    "coal_price_bid": None,
 }
 
 
@@ -53,13 +56,6 @@ def observation_to_text(obs: dict) -> str:
 
     shortfall_steps = obs.get("steps_until_shortfall", 999)
     blackout_risk = obs.get("blackout_risk", "none")
-    voltage = obs.get("voltage_stability_index", 100)
-
-    # ---- Semantic reasoning ----
-    gap_msg = f"{gap:+.0f} MW"
-    freq_msg = f"{freq:.2f} Hz"
-    risk_msg = blackout_risk.upper()
-    future_msg = f"In {shortfall_steps} steps" if shortfall_steps < 15 else "Clear"
 
     # ---- Market + dynamics ----
 
@@ -90,36 +86,60 @@ def observation_to_text(obs: dict) -> str:
 Goal: Maintain 50Hz, avoid blackout.
 """
 
-import json
-import re
-
 def extract_action_from_llm_output(text: str):
+    """
+    Robust parser for LLM output.
+    Handles:
+    - invalid JSON (None, single quotes, etc.)
+    - missing JSON blocks
+    - fallback safely
+    """
+
     if not text:
-        return SAFE_DEFAULT_ACTION
+        print("[WARN] empty model output")
+        return {}
 
-    # Normalize text
-    text = text.strip()
+    # 🔍 Try to find JSON block inside text
+    json_match = re.search(r"\{.*\}", text, re.DOTALL)
 
-    # Try to find JSON after "Action"
-    match = re.search(r"Action\s*:\s*(\{[\s\S]*?\})", text, re.IGNORECASE)
-
-    if not match:
-        # fallback: find ANY JSON block
-        match = re.search(r"(\{[\s\S]*?\})", text)
-
-    if not match:
+    if not json_match:
         print("[WARN] no JSON found")
-        return SAFE_DEFAULT_ACTION
+        return {}
 
-    json_str = match.group(1)
+    raw_json = json_match.group(0)
 
+    # 🔥 CLEANING STEPS (CRITICAL)
+    cleaned = raw_json
+
+    # Replace Python-style None → JSON null/0
+    cleaned = cleaned.replace("None", "0")
+
+    # Replace single quotes → double quotes
+    cleaned = cleaned.replace("'", '"')
+
+    # Remove trailing commas
+    cleaned = re.sub(r",\s*}", "}", cleaned)
+    cleaned = re.sub(r",\s*]", "]", cleaned)
+
+    # Remove invalid tokens like { valid JSON }
+    if "valid JSON" in cleaned:
+        print("[WARN] placeholder JSON detected")
+        return {}
+
+    # 🔥 Try parsing
     try:
-        data = json.loads(json_str)
-        return _dict_to_action(data)
+        parsed = json.loads(cleaned)
+
+        if not isinstance(parsed, dict):
+            print("[WARN] parsed JSON is not dict")
+            return {}
+
+        return parsed
+
     except Exception as e:
-        print("[WARN] JSON parse failed:", e)
-        print("BAD JSON:", json_str)
-        return SAFE_DEFAULT_ACTION
+        print(f"[WARN] JSON parse failed: {e}")
+        print("BAD JSON:", raw_json)
+        return {}
 
 def _dict_to_action(data: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -183,8 +203,35 @@ def _dict_to_action(data: Dict[str, Any]) -> Dict[str, Any]:
         "plant_action": plant_action,
         "emergency_coal_boost": emergency_boost,
         "demand_response_mw": demand_response,
+        "grid_export_mw": _clamp(data.get("grid_export_mw", 0.0), 0.0, 100.0, 0.0),
+        "grid_import_mw": _clamp(data.get("grid_import_mw", 0.0), 0.0, 100.0, 0.0),
+        "coal_price_bid": data.get("coal_price_bid") if data.get("coal_price_bid") is not None else None,
     }
 
+def build_compact_obs(obs):
+    """
+    Converts observation object into compact text prompt.
+    """
+
+    try:
+        return f"""Grid Status:
+    - Demand: {obs.demand_mw}MW | Supply: {obs.supply_mw}MW
+    - Freq: {obs.frequency_hz:.2f}Hz | Reserve: {obs.reserve_margin_mw}/{obs.reserve_margin_mw}MW
+    - Battery: {int(obs.battery_soc * 100)}% | Risk: {getattr(obs, 'risk_level', 'none')}
+    Market: Price={getattr(obs, 'market_price', 1.0):.2f}
+
+    Goal: Maintain 50Hz, avoid blackout."""
+    except Exception:
+            # fallback if object is dict-like
+            d = obs if isinstance(obs, dict) else obs.__dict__
+
+            return f"""Grid Status:
+    - Demand: {d.get('demand_mw')}MW | Supply: {d.get('supply_mw')}MW
+    - Freq: {d.get('frequency_hz')}Hz | Reserve: {d.get('reserve_margin_mw')}MW
+    - Battery: {int(d.get('battery_soc', 0) * 100)}% | Risk: {d.get('risk_level', 'none')}
+    Market: Price={d.get('market_price', 1.0)}
+
+    Goal: Maintain 50Hz, avoid blackout."""
 
 def build_multi_agent_prompt(obs: Dict[str, Any], ask_agent: str = "dispatch") -> str:
     """

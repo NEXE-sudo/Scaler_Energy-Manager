@@ -109,8 +109,6 @@ def _build_client() -> tuple[OpenAI, str]:
             f"Missing required API configuration. URL={bool(api_base_url)}, "
             f"Model={bool(model_name)}, Key={bool(api_key)}"
         )
-
-    print(f"[DEBUG] Using API Key starting with: {api_key[:5]}...")
     
     try:
         client = OpenAI(api_key=api_key, base_url=api_base_url)
@@ -126,7 +124,7 @@ def _build_client() -> tuple[OpenAI, str]:
 # Model Routing & Token budget
 # ---------------------------------------------------------------------------
 
-PLANNING_MODEL = os.getenv("PLANNING_MODEL", "llama-3.3-70b-versatile")
+PLANNING_MODEL = os.getenv("PLANNING_MODEL", "openai/gpt-oss-120b")
 FAST_MODEL     = os.getenv("FAST_MODEL", "llama-3.1-8b-instant")
 
 PLANNING_MAX_TOKENS = 600  # Detailed reasoning for infrastructure
@@ -246,16 +244,6 @@ def _build_system_prompt(
     base = f"""{role_prompt}
 
 Think step-by-step before acting.
-
-Respond EXACTLY in this format:
-
-Thought:
-<Your reasoning here>
-
-Action:
-{{
-  // Only the fields relevant to your role
-}}
 """
 
     # ---- Multi-agent context (every 3 steps only) ----
@@ -387,6 +375,9 @@ def _dict_to_action(data: Dict[str, Any]) -> EnergyGridAction:
         plant_action=plant_action,
         emergency_coal_boost=bool(emergency_boost),
         demand_response_mw=_clamp(data.get("demand_response_mw", 0.0), 0.0, 150.0, 0.0),
+        grid_export_mw=_clamp(data.get("grid_export_mw", 0.0), 0.0, 100.0, 0.0),
+        grid_import_mw=_clamp(data.get("grid_import_mw", 0.0), 0.0, 100.0, 0.0),
+        coal_price_bid=data.get("coal_price_bid") if data.get("coal_price_bid") is not None else None,
     )
 
 # ---------------------------------------------------------------------------
@@ -514,15 +505,18 @@ def run_task(
             sys_p = _build_system_prompt(task_id, plan, step, agent_type="planning")
             resp_p = _call_llm_with_retry(client, PLANNING_MODEL, sys_p, [{"role": "user", "content": observation_to_text(obs.__dict__)}], agent_type="planning", verbose=verbose)
             last_planning_action = _parse_action(resp_p)
+            last_planning_action = _apply_control_layer(last_planning_action, obs)
         
         # 2. Dispatch and Market Proposals (Always called)
         sys_d = _build_system_prompt(task_id, plan, step, agent_type="dispatch")
         resp_d = _call_llm_with_retry(client, model, sys_d, [{"role": "user", "content": observation_to_text(obs.__dict__)}], agent_type="dispatch", verbose=verbose)
         prop_d = _parse_action(resp_d)
+        prop_d = _apply_control_layer(prop_d, obs)
 
         sys_m = _build_system_prompt(task_id, plan, step, agent_type="market")
         resp_m = _call_llm_with_retry(client, model, sys_m, [{"role": "user", "content": observation_to_text(obs.__dict__)}], agent_type="market", verbose=verbose)
         prop_m = _parse_action(resp_m)
+        prop_m = _apply_control_layer(prop_m, obs)
 
         if task_id == "easy":
             # Task 1: Proposal becomes final immediately for easy
@@ -543,11 +537,13 @@ def run_task(
             sys_rd = _build_system_prompt(task_id, plan, step, agent_type="dispatch")
             resp_rd = _call_llm_with_retry(client, model, sys_rd, [{"role": "user", "content": observation_to_text(obs_mid.__dict__)}], agent_type="dispatch", verbose=verbose)
             rev_d = _parse_action(resp_rd)
+            rev_d = _apply_control_layer(rev_d, obs_mid)
             rev_d.proposal_type = "revision"
 
             sys_rm = _build_system_prompt(task_id, plan, step, agent_type="market")
             resp_rm = _call_llm_with_retry(client, model, sys_rm, [{"role": "user", "content": observation_to_text(obs_mid.__dict__)}], agent_type="market", verbose=verbose)
             rev_m = _parse_action(resp_rm)
+            rev_m = _apply_control_layer(rev_m, obs_mid)
             rev_m.proposal_type = "revision"
 
             # Round 2 submitted (advances simulator)
@@ -654,7 +650,7 @@ def run_task(
         print(f"[METRIC] avg_reward={sum(rewards_list)/len(rewards_list):.3f}", flush=True)
 
     if verbose:
-        print("\n  📊 GRADE:", grade.get("total_score", 0.0))
+        print("\n  [GRADE]:", grade.get("total_score", 0.0))
         print("  Components:", grade.get("component_scores", {}))
         print("  Total reward:", total_reward)
 

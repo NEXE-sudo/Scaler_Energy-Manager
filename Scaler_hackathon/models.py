@@ -332,6 +332,11 @@ class EnergyGridAction(Action):
     scheduled_dr_start: int = 0
     scheduled_dr_duration: int = 0
 
+    # Market missing fields
+    grid_export_mw: float = Field(default=0.0, ge=0.0, le=100.0)
+    grid_import_mw: float = Field(default=0.0, ge=0.0, le=100.0)
+    coal_price_bid: Optional[float] = Field(default=None, ge=0.5, le=3.0)
+
     @field_validator("battery_mode")
     @classmethod
     def validate_battery_mode(cls, v: str) -> str:
@@ -370,10 +375,13 @@ class EnergyGridAction(Action):
     def to_market(self) -> MarketAgentAction:
         """Extract market fields as a MarketAgentAction."""
         return MarketAgentAction(
-        demand_response_mw=self.demand_response_mw,
-        scheduled_dr_mw=self.scheduled_dr_mw,
-        scheduled_dr_start=self.scheduled_dr_start,
-        scheduled_dr_duration=self.scheduled_dr_duration,
+            demand_response_mw=self.demand_response_mw,
+            scheduled_dr_mw=self.scheduled_dr_mw,
+            scheduled_dr_start=self.scheduled_dr_start,
+            scheduled_dr_duration=self.scheduled_dr_duration,
+            grid_export_mw=getattr(self, 'grid_export_mw', 0.0),
+            grid_import_mw=getattr(self, 'grid_import_mw', 0.0),
+            coal_price_bid=getattr(self, 'coal_price_bid', None),
         )
         
     @classmethod
@@ -392,6 +400,12 @@ class EnergyGridAction(Action):
             emergency_coal_boost=dispatch.emergency_coal_boost,
             plant_action=planning.plant_action,
             demand_response_mw=market.demand_response_mw,
+            grid_export_mw=getattr(market, 'grid_export_mw', 0.0),
+            grid_import_mw=getattr(market, 'grid_import_mw', 0.0),
+            coal_price_bid=getattr(market, 'coal_price_bid', None),
+            scheduled_dr_mw=getattr(market, 'scheduled_dr_mw', 0.0),
+            scheduled_dr_start=getattr(market, 'scheduled_dr_start', 0),
+            scheduled_dr_duration=getattr(market, 'scheduled_dr_duration', 0),
             thought=dispatch.thought,
             proposal_type=dispatch.proposal_type,
         )

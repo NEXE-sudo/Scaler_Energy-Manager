@@ -17,6 +17,11 @@ import json
 import os
 import sys
 import time
+if sys.stdout.encoding.lower() != 'utf-8':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -54,13 +59,6 @@ from models import (
 
 
 from server.llm_adapter import observation_to_text
-
-def obs_to_prompt_text(obs: EnergyGridObservation, task_id: str) -> str:
-    """
-    Wraps the existing observation_to_text to return the text string.
-    """
-    obs_dict = obs.model_dump() if hasattr(obs, "model_dump") else obs
-    return observation_to_text(obs_dict)
 
 def format_response(response_text: str) -> str:
     if not response_text or not response_text.strip():
@@ -110,7 +108,7 @@ def run_episode_with_collection(
             model_to_use = model_map.get(agent_type, model_map.get("default", "llama-3.1-8b-instant"))
             system_prompt = _build_system_prompt(task_id=task_id, plan=plan, step=step, agent_type=agent_type)
             filtered_obs = env._filter_observation_for_agent(obs, agent_type)
-            user_prompt = observation_to_text(filtered_obs.model_dump())
+            user_prompt = observation_to_text(filtered_obs if isinstance(filtered_obs, dict) else filtered_obs.model_dump())
 
             response_text = _call_llm_with_retry(
                 client=client, model=model_to_use, system=system_prompt,
@@ -123,17 +121,26 @@ def run_episode_with_collection(
                 unified_action = EnergyGridAction()
             else:
                 unified_action = _parse_action(response_text)
+                
+            from server.baseline import _apply_control_layer
+            unified_action = _apply_control_layer(unified_action, obs)
             
-            if agent_type == "planning":
-                action_dict = PlanningAgentAction(**unified_action.model_dump())
-                last_planning_action = action_dict
-            elif agent_type == "dispatch":
-                action_dict = DispatchAgentAction(**unified_action.model_dump())
-            else:
-                action_dict = MarketAgentAction(**unified_action.model_dump())
-
-            action_dict.proposal_type = "proposal"
-            action_dict.thought = response_text.split("Thought:")[1].split("Action:")[0].strip() if "Thought:" in response_text else ""
+            try:
+                if agent_type == "planning":
+                    action_dict = PlanningAgentAction(**unified_action.model_dump())
+                    last_planning_action = action_dict
+                elif agent_type == "dispatch":
+                    action_dict = DispatchAgentAction(**unified_action.model_dump())
+                else:
+                    action_dict = MarketAgentAction(**unified_action.model_dump())
+            except Exception:
+                if agent_type == "planning":
+                    action_dict = PlanningAgentAction(plant_action="none")
+                    last_planning_action = action_dict
+                elif agent_type == "dispatch":
+                    action_dict = DispatchAgentAction(coal_delta=0.0, hydro_delta=0.0, nuclear_delta=0.0, battery_mode="idle", emergency_coal_boost=False)
+                else:
+                    action_dict = MarketAgentAction(demand_response_mw=0.0, grid_export_mw=0.0, grid_import_mw=0.0, coal_price_bid=0.0)
             
             proposals[agent_type] = {"action": action_dict, "response": response_text, "prompt": user_prompt, "called": True}
             
@@ -149,12 +156,16 @@ def run_episode_with_collection(
                     "prompt": data["prompt"], "response": data["response"],
                     "system": system_prompt,
                     "reward": 0.0,
-                    "task_id": task_id
+                    "task_id": task_id,
+                    "blackout": getattr(obs_negotiation, "episode_ended_early", False)
                 })
 
         # Step 3 agents for Round 2
         if task_id == "easy":
             # Task 8: Skip revision round for easy tasks
+            last_planning_action.proposal_type = "revision"
+            proposals["dispatch"]["action"].proposal_type = "revision"
+            proposals["market"]["action"].proposal_type = "revision"
             env.step_planning(last_planning_action)
             env.step_dispatch(proposals["dispatch"]["action"])
             next_obs = env.step_market(proposals["market"]["action"])
@@ -165,7 +176,7 @@ def run_episode_with_collection(
                 model_to_use = model_map.get(agent_type, model_map.get("default", "llama-3.1-8b-instant"))
                 system_prompt = _build_system_prompt(task_id=task_id, plan=plan, step=step, agent_type=agent_type)
                 filtered_obs = env._filter_observation_for_agent(obs_negotiation, agent_type)
-                user_prompt = observation_to_text(filtered_obs.model_dump())
+                user_prompt = observation_to_text(filtered_obs if isinstance(filtered_obs, dict) else filtered_obs.model_dump())
 
                 response_text = _call_llm_with_retry(
                     client=client, model=model_to_use, system=system_prompt,
@@ -184,14 +195,22 @@ def run_episode_with_collection(
                 else:
                     unified_action = _parse_action(response_text)
                 
-                if agent_type == "dispatch":
-                    action_dict = DispatchAgentAction(**unified_action.model_dump())
-                else:
-                    action_dict = MarketAgentAction(**unified_action.model_dump())
-
-                action_dict.proposal_type = "revision"
+                from server.baseline import _apply_control_layer
+                unified_action = _apply_control_layer(unified_action, obs_negotiation)
+                
+                try:
+                    if agent_type == "dispatch":
+                        action_dict = DispatchAgentAction(**unified_action.model_dump())
+                    else:
+                        action_dict = MarketAgentAction(**unified_action.model_dump())
+                except Exception:
+                    if agent_type == "dispatch":
+                        action_dict = DispatchAgentAction(coal_delta=0.0, hydro_delta=0.0, nuclear_delta=0.0, battery_mode="idle", emergency_coal_boost=False)
+                    else:
+                        action_dict = MarketAgentAction(demand_response_mw=0.0, grid_export_mw=0.0, grid_import_mw=0.0, coal_price_bid=0.0)
                 revisions[agent_type] = {"action": action_dict, "response": response_text, "prompt": user_prompt}
 
+            last_planning_action.proposal_type = "revision"
             env.step_planning(last_planning_action)
             env.step_dispatch(revisions["dispatch"]["action"])
             next_obs = env.step_market(revisions["market"]["action"]) # ADVANCES SIMULATOR
@@ -205,7 +224,8 @@ def run_episode_with_collection(
                     "agent": agent_type, "phase": "revision", "step": step,
                     "prompt": data["prompt"], "response": data["response"],
                     "system": system_prompt,
-                    "reward": agent_reward, "done": next_obs.done, "task_id": task_id
+                    "reward": agent_reward, "done": next_obs.done, "task_id": task_id,
+                    "blackout": getattr(next_obs, "episode_ended_early", False)
                 })
 
         records.extend(step_records)
@@ -230,9 +250,9 @@ def generate_dataset(
         # Default mixed-model approach
         model_map = {
             "planning": "openai/gpt-oss-120b",
-            "dispatch": "openai/gpt-oss-20b",
-            "market":   "openai/gpt-oss-20b",
-            "default":  "openai/gpt-oss-20b"
+            "dispatch": "llama-3.1-8b-instant",
+            "market":   "llama-3.1-8b-instant",
+            "default":  "llama-3.1-8b-instant"
         }
 
     client, _ = _build_client()
@@ -241,7 +261,7 @@ def generate_dataset(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     total_records = 0
 
-    with open(output_path, "w") as fout:
+    with open(output_path, "w", encoding="utf-8") as fout:
         for task_id in task_ids:
             print(f"\n{'='*60}\nCollecting {n_episodes} episodes for task: {task_id}\n{'='*60}")
 
@@ -274,7 +294,9 @@ def generate_dataset(
 
                 for rec in records:
                     # Validate before writing: skip empty responses
-                    if not rec["response"] or not rec["response"].strip():
+                    if not rec.get("response") or not rec["response"].strip():
+                        continue
+                    if "Thought:" not in rec["response"] or "Action:" not in rec["response"]:
                         continue
                     fout.write(json.dumps(rec, ensure_ascii=False) + "\n")
                     fout.flush() # Incremental save

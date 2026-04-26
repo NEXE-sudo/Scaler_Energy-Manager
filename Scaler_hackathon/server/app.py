@@ -221,7 +221,6 @@ async def grade_episode(request: GraderRequest = GraderRequest()) -> JSONRespons
 @app.post("/train")
 async def train_model():
     import subprocess
-    import os
 
     try:
         result = subprocess.run(

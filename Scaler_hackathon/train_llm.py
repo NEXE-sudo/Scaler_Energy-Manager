@@ -25,9 +25,14 @@ Requirements (install in Colab):
 
 import argparse
 import torch
-import json
 import os
 import sys
+import json
+if sys.stdout.encoding.lower() != 'utf-8':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import warnings
@@ -63,7 +68,7 @@ DEFAULTS = {
 }
 
 # Template used by DataCollatorForCompletionOnlyLM to identify response start
-RESPONSE_TEMPLATE = "<|assistant|>\n"
+RESPONSE_TEMPLATE = "### Response:\n"
 
 def detect_device():
     return "cuda" if torch.cuda.is_available() else "cpu"
@@ -83,7 +88,7 @@ def resolve_device(arg_device: str) -> str:
 def load_clean_dataset(path: str) -> List[Dict[str, str]]:
     """Load TRL-formatted JSONL (prompt + completion fields)."""
     records = []
-    with open(path) as f:
+    with open(path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line:
@@ -96,18 +101,22 @@ def load_clean_dataset(path: str) -> List[Dict[str, str]]:
 
 
 def records_to_hf_dataset(records: List[Dict[str, str]]):
-    """Convert list of dicts to a HuggingFace Dataset."""
+    """Convert list of dicts to a HuggingFace Dataset (prompt+completion merged into 'text')."""
     from datasets import Dataset
-    return Dataset.from_list(records)
+    merged = [{"text": r["prompt"] + r["completion"]} for r in records]
+    return Dataset.from_list(merged)
 
 
-def formatting_func(example: Dict[str, str]) -> str:
+def formatting_func(example: Dict[str, Any]) -> List[str]:
     """
     Combine prompt + completion into a single training string.
     TRL SFTTrainer uses this when format='text' mode.
     The RESPONSE_TEMPLATE separator tells the collator which tokens to train on.
     """
-    return example["prompt"] + example["completion"]
+    if isinstance(example.get("prompt"), list):
+        return [p + c for p, c in zip(example["prompt"], example["completion"])]
+    else:
+        return [example["prompt"] + example["completion"]]
 
 device = detect_device()
 print(f"Detected device: {device}")
@@ -148,81 +157,154 @@ def load_model_and_tokenizer(cfg: dict, device: str):
 
     return model, tokenizer
 
-def train_standard(cfg: dict, dataset, device: str) -> None:
-    """Train using transformers + trl + peft (CPU/GPU safe)."""
-
+def train_standard(cfg, dataset, device):
     import torch
-    from transformers import TrainingArguments
-    from peft import LoraConfig, TaskType, get_peft_model
+    from transformers import TrainingArguments, AutoModelForCausalLM, AutoTokenizer
+    from peft import LoraConfig, get_peft_model
+    from trl import SFTTrainer
 
-    try:
-        from trl import SFTTrainer, DataCollatorForCompletionOnlyLM
-    except ImportError:
-        from trl.trainer import SFTTrainer, DataCollatorForCompletionOnlyLM
+    print("🚀 Starting training pipeline...")
 
+    # ✅ Ensure output path exists
+    cfg.setdefault("output", "./lora_energy_grid")
+
+    # 🔍 DEBUG: inspect dataset structure
+    if len(dataset) == 0:
+        raise ValueError("❌ Dataset is completely empty before processing")
+
+    print("\n🔍 RAW DATA SAMPLE:")
+    print(dataset[0])
+
+    # ✅ Robust merge function (auto-detect format)
+    def merge_prompt_completion(dataset):
+        merged = []
+
+        for item in dataset:
+            text = None
+
+            # Case 1: already merged
+            if "text" in item:
+                text = item["text"]
+
+            # Case 2: prompt + completion
+            elif "prompt" in item and "completion" in item:
+                text = item["prompt"] + item["completion"]
+
+            # Case 3: prompt + response
+            elif "prompt" in item and "response" in item:
+                text = item["prompt"] + item["response"]
+
+            # Case 4: input + output
+            elif "input" in item and "output" in item:
+                text = item["input"] + item["output"]
+
+            # Case 5: system + prompt + response
+            elif "system" in item and "prompt" in item and "response" in item:
+                text = f"<|system|>\n{item['system']}\n<|user|>\n{item['prompt']}\n<|assistant|>\n{item['response']}"
+
+            if text:
+                merged.append({"text": text})
+
+        return merged
+
+    dataset = merge_prompt_completion(dataset)
+
+    print(f"\n📊 Dataset size after merge: {len(dataset)}")
+
+    # 🚨 HARD STOP if still empty
+    if len(dataset) == 0:
+        raise ValueError("❌ Dataset is EMPTY after merge. Format mismatch.")
+
+    print("\n🧪 SAMPLE AFTER MERGE:")
+    print(dataset[0]["text"][:500])
+
+    # ✅ Load model
     print(f"\nLoading model: {cfg['model']}")
+    model = AutoModelForCausalLM.from_pretrained(
+        cfg["model"],
+        torch_dtype=torch.float32,
+        device_map=None
+    )
 
-    # Load model + tokenizer safely
-    model, tokenizer = load_model_and_tokenizer(cfg, device)
+    tokenizer = AutoTokenizer.from_pretrained(cfg["model"])
+    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "right"
 
-    # LoRA config
+    model.to("cpu")
+    model.config.use_cache = False
+
+    # ✅ LoRA config
     lora_config = LoraConfig(
-        task_type=TaskType.CAUSAL_LM,
-        r=cfg["lora_r"],
-        lora_alpha=cfg["lora_alpha"],
-        lora_dropout=cfg["lora_dropout"],
-        target_modules=cfg["lora_targets"],
+        r=cfg.get("lora_r", 16),
+        lora_alpha=32,
+        target_modules=["q_proj", "v_proj"],
+        lora_dropout=0.05,
         bias="none",
+        task_type="CAUSAL_LM"
     )
 
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
 
-    # Train only on completion tokens
-    collator = DataCollatorForCompletionOnlyLM(
-        response_template=RESPONSE_TEMPLATE,
-        tokenizer=tokenizer,
+    # ✅ Training arguments
+    training_args = TrainingArguments(
+        output_dir=cfg["output"],
+        per_device_train_batch_size=1,
+        gradient_accumulation_steps=4,
+        num_train_epochs=cfg.get("epochs", 2),
+        max_steps=cfg.get("max_steps", 100),
+        logging_steps=1,
+        save_strategy="no",
+        learning_rate=2e-4,
+        fp16=False,
+        bf16=False,
+        report_to="none"
     )
 
-    # Training arguments
-    training_args = TrainingArguments(
-        output_dir=cfg["output_dir"],
-        num_train_epochs=cfg["epochs"],
-        per_device_train_batch_size=cfg["batch_size"],
-        gradient_accumulation_steps=cfg["grad_accum"],
-        learning_rate=cfg["lr"],
-        warmup_steps=cfg["warmup_steps"],
-        max_steps=cfg["max_steps"] if cfg["max_steps"] > 0 else -1,
-        fp16=(cfg["dtype"] == "float16" and device == "cuda"),
-        bf16=(cfg["dtype"] == "bfloat16" and device == "cuda"),
-        gradient_checkpointing=cfg["gradient_checkpointing"],
-        logging_steps=cfg["logging_steps"],
-        save_steps=cfg["save_steps"],
-        save_total_limit=2,
-        report_to="none",
-        dataloader_num_workers=0,
+    from transformers import Trainer
+
+    # 🔥 Tokenization function
+    def tokenize_function(examples):
+        tokenized = tokenizer(
+            examples["text"],
+            truncation=True,
+            padding="max_length",
+            max_length=512,
+        )
+
+        # 🔥 CRITICAL FIX: add labels
+        tokenized["labels"] = tokenized["input_ids"].copy()
+
+        return tokenized
+
+    # Convert dataset (list → HF dataset)
+    from datasets import Dataset
+    hf_dataset = Dataset.from_list(dataset)
+
+    # Tokenize
+    tokenized_dataset = hf_dataset.map(tokenize_function, batched=True)
+
+    # Set format for PyTorch
+    tokenized_dataset.set_format(
+        type="torch",
+        columns=["input_ids", "attention_mask", "labels"]
     )
 
     # Trainer
-    trainer = SFTTrainer(
+    trainer = Trainer(
         model=model,
-        tokenizer=tokenizer,
-        train_dataset=dataset,
-        formatting_func=formatting_func,
-        data_collator=collator,
-        max_seq_length=cfg["max_seq_length"],
         args=training_args,
+        train_dataset=tokenized_dataset,
     )
 
-    print("\nStarting training...")
+    print("\n🔥 Starting training...")
     trainer.train()
 
-    # Save LoRA weights
-    model.save_pretrained(cfg["output_dir"])
-    tokenizer.save_pretrained(cfg["output_dir"])
+    print("\n💾 Saving LoRA model...")
+    model.save_pretrained(cfg["output"])
+    tokenizer.save_pretrained(cfg["output"])
 
-    print(f"\n[✓] Model saved to {cfg['output_dir']}")
-
+    print("\n✅ Training complete!")    
 # ─────────────────────────────────────────────────────────────────────────────
 # Unsloth training path (faster, lower VRAM)
 # ─────────────────────────────────────────────────────────────────────────────
