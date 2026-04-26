@@ -1,6 +1,6 @@
----
+﻿---
 title: Scaler Energy Manager
-emoji: lightning
+emoji: ⚡
 colorFrom: yellow
 colorTo: green
 sdk: docker
