@@ -66,7 +66,7 @@ def run_lora_inference(task_ids):
     print(f"\n[LoRA] Loading TinyLlama + LoRA from {LORA_MODEL_DIR} ...")
     base_model_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 
-    tokenizer = AutoTokenizer.from_pretrained("TinyLlama/TinyLlama-1.1B-Chat-v1.0")
+    tokenizer = AutoTokenizer.from_pretrained(base_model_name)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     base_model = AutoModelForCausalLM.from_pretrained(
@@ -189,6 +189,8 @@ def run_lora_inference(task_ids):
 def print_comparison(base_results, lora_results, task_ids):
     base_by_task = {}
 
+    if isinstance(base_results, dict) and "results" in base_results:
+        base_results = list(base_results["results"].values())
     if isinstance(base_results, list):
         for r in base_results:
             if isinstance(r, dict) and "task_id" in r:
@@ -261,53 +263,9 @@ def plot_rewards(rewards, title="Reward over Time", save_path=None):
     plt.show()
 
 
-# ─────────────────────────────────────────────
-# 2. Plot base vs LoRA scores
-# ─────────────────────────────────────────────
-def plot_comparison(base_results, lora_results, save_path=None):
-    import matplotlib.pyplot as plt
-
-    # ✅ Safe fallback if base is missing
-    if not isinstance(base_results, list):
-        print("[WARN] No valid base_results — using fallback values")
-        base_results = [
-            {"task_id": r["task_id"], "score": 0.24}
-            for r in lora_results
-        ]
-
-    tasks = [r["task_id"] for r in lora_results]
-
-    base_scores = []
-    for t in tasks:
-        match = next(
-            (b for b in base_results if isinstance(b, dict) and b.get("task_id") == t),
-            None
-        )
-        base_scores.append(match["score"] if match else 0)
-
-    lora_scores = [r["score"] for r in lora_results]
-
-    x = range(len(tasks))
-    width = 0.35
-
-    plt.figure()
-    plt.bar([i - width/2 for i in x], base_scores, width=width, label="Base Model")
-    plt.bar([i + width/2 for i in x], lora_scores, width=width, label="LoRA Model")
-
-    plt.xticks(x, tasks)
-    plt.ylabel("Score")
-    plt.title("Model Comparison")
-    plt.legend()
-    plt.grid(axis='y')
-
-    if save_path:
-        plt.savefig(save_path)
-        print(f"[Saved] {save_path}")
-
-    plt.show()
 
 # ─────────────────────────────────────────────
-# 3. Plot dual reward comparison
+# 2. Plot dual reward comparison
 # ─────────────────────────────────────────────
 def plot_dual_rewards(base_rewards, lora_rewards, title="Reward Comparison", save_path=None):
     plt.figure()
@@ -326,6 +284,10 @@ def plot_dual_rewards(base_rewards, lora_rewards, title="Reward Comparison", sav
         print(f"[Saved] {save_path}")
 
     plt.show()
+    
+# ─────────────────────────────────────────────
+# 3. Plot base vs LoRA scores
+# ─────────────────────────────────────────────
     
 def plot_comparison(base_results, lora_results, save_path=None):
     import matplotlib.pyplot as plt
@@ -421,8 +383,10 @@ def main():
             base_results = json.load(f)
 
     print_comparison(base_results, lora_results, task_ids)
-    if base_results and lora_results:
-        plot_comparison(base_results, lora_results, save_path="plots/comparison.png")
+    os.makedirs("plots", exist_ok=True)
+    if lora_results:
+        effective_base = base_results if isinstance(base_results, list) else []
+        plot_comparison(effective_base or [], lora_results, save_path="plots/comparison.png")
 
 
 if __name__ == "__main__":

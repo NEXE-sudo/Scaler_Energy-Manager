@@ -86,60 +86,47 @@ def observation_to_text(obs: dict) -> str:
 Goal: Maintain 50Hz, avoid blackout.
 """
 
-def extract_action_from_llm_output(text: str):
-    """
-    Robust parser for LLM output.
-    Handles:
-    - invalid JSON (None, single quotes, etc.)
-    - missing JSON blocks
-    - fallback safely
-    """
-
+def extract_action_from_llm_output(text: str) -> dict:
     if not text:
-        print("[WARN] empty model output")
-        return {}
+        return dict(SAFE_DEFAULT_ACTION)
 
-    # 🔍 Try to find JSON block inside text
-    json_match = re.search(r"\{.*\}", text, re.DOTALL)
+    # Strip markdown fences
+    text = re.sub(r"```[a-z]*\n?|```", "", text).strip()
 
-    if not json_match:
-        print("[WARN] no JSON found")
-        return {}
+    # Find the last JSON object (more likely to be the final action)
+    matches = list(re.finditer(r"\{[^{}]*\}", text, re.DOTALL))
+    if not matches:
+        # Try multi-level braces
+        start = text.rfind("{")
+        end   = text.rfind("}")
+        if start == -1 or end == -1 or end < start:
+            return dict(SAFE_DEFAULT_ACTION)
+        matches = [type("m", (), {"group": lambda self, x=0: text[start:end+1]})()]
 
-    raw_json = json_match.group(0)
+    for match in reversed(matches):
+        raw = match.group(0)
 
-    # 🔥 CLEANING STEPS (CRITICAL)
-    cleaned = raw_json
+        # Clean Python literals → JSON
+        raw = re.sub(r"\bNone\b",  "0",     raw)
+        raw = re.sub(r"\bTrue\b",  "true",  raw)
+        raw = re.sub(r"\bFalse\b", "false", raw)
+        raw = raw.replace("'", '"')
+        raw = re.sub(r",\s*}", "}", raw)
+        raw = re.sub(r",\s*]", "]", raw)
+        raw = re.sub(r"//.*",  "",  raw)
 
-    # Replace Python-style None → JSON null/0
-    cleaned = cleaned.replace("None", "0")
+        # Skip placeholder text
+        if "valid JSON" in raw or "<" in raw:
+            continue
 
-    # Replace single quotes → double quotes
-    cleaned = cleaned.replace("'", '"')
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict) and len(parsed) > 0:
+                return parsed
+        except json.JSONDecodeError:
+            pass
 
-    # Remove trailing commas
-    cleaned = re.sub(r",\s*}", "}", cleaned)
-    cleaned = re.sub(r",\s*]", "]", cleaned)
-
-    # Remove invalid tokens like { valid JSON }
-    if "valid JSON" in cleaned:
-        print("[WARN] placeholder JSON detected")
-        return {}
-
-    # 🔥 Try parsing
-    try:
-        parsed = json.loads(cleaned)
-
-        if not isinstance(parsed, dict):
-            print("[WARN] parsed JSON is not dict")
-            return {}
-
-        return parsed
-
-    except Exception as e:
-        print(f"[WARN] JSON parse failed: {e}")
-        print("BAD JSON:", raw_json)
-        return {}
+    return dict(SAFE_DEFAULT_ACTION)
 
 def _dict_to_action(data: Dict[str, Any]) -> Dict[str, Any]:
     """

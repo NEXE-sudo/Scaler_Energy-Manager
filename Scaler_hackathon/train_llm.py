@@ -166,7 +166,7 @@ def train_standard(cfg, dataset, device):
     print("🚀 Starting training pipeline...")
 
     # ✅ Ensure output path exists
-    cfg.setdefault("output", "./lora_energy_grid")
+    cfg["output"] = cfg.get("output_dir", "./lora_energy_grid")
 
     # 🔍 DEBUG: inspect dataset structure
     if len(dataset) == 0:

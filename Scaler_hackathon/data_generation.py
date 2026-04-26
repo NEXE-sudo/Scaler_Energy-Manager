@@ -101,7 +101,7 @@ def run_episode_with_collection(
             if agent_type == "planning":
                 from server.baseline import _is_major_event
                 if not _is_major_event(obs, prev_obs) and last_planning_action is not None:
-                    proposals[agent_type] = {"action": last_planning_action, "called": False}
+                    proposals[agent_type] = {"action": action_dict, "response": response_text, "prompt": user_prompt, "system": data["system"], "called": True}
                     obs_negotiation = env.step_planning(last_planning_action)
                     continue
 
@@ -154,7 +154,7 @@ def run_episode_with_collection(
                 step_records.append({
                     "agent": agent_type, "phase": "proposal", "step": step,
                     "prompt": data["prompt"], "response": data["response"],
-                    "system": system_prompt,
+                    "system": data["system"],
                     "reward": 0.0,
                     "task_id": task_id,
                     "blackout": getattr(obs_negotiation, "episode_ended_early", False)
@@ -208,7 +208,7 @@ def run_episode_with_collection(
                         action_dict = DispatchAgentAction(coal_delta=0.0, hydro_delta=0.0, nuclear_delta=0.0, battery_mode="idle", emergency_coal_boost=False)
                     else:
                         action_dict = MarketAgentAction(demand_response_mw=0.0, grid_export_mw=0.0, grid_import_mw=0.0, coal_price_bid=0.0)
-                revisions[agent_type] = {"action": action_dict, "response": response_text, "prompt": user_prompt}
+                revisions[agent_type] = {"action": action_dict, "response": response_text, "prompt": user_prompt, "system": system_prompt}
 
             last_planning_action.proposal_type = "revision"
             env.step_planning(last_planning_action)
@@ -223,7 +223,7 @@ def run_episode_with_collection(
                 step_records.append({
                     "agent": agent_type, "phase": "revision", "step": step,
                     "prompt": data["prompt"], "response": data["response"],
-                    "system": system_prompt,
+                    "system": data["system"],
                     "reward": agent_reward, "done": next_obs.done, "task_id": task_id,
                     "blackout": getattr(next_obs, "episode_ended_early", False)
                 })
@@ -325,7 +325,7 @@ def main():
     if not output_path.is_absolute():
         # If relative path, save to project root
         project_root = ROOT.parent
-        output_path = project_root / output_path
+        output_path = ROOT / output_path
 
     generate_dataset(
         task_ids   = args.tasks,

@@ -25,7 +25,7 @@ import argparse
 import json
 import re
 import sys
-if sys.stdout.encoding.lower() != 'utf-8':
+if (sys.stdout.encoding or "utf-8").lower() != 'utf-8':
     try:
         sys.stdout.reconfigure(encoding='utf-8')
     except Exception:
