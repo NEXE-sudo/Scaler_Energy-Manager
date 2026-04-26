@@ -1,16 +1,10 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
-
 # Multi-stage build using openenv-base
 # This Dockerfile is flexible and works for both:
 # - In-repo environments (with local OpenEnv sources)
 # - Standalone environments (with openenv from PyPI/Git)
 # The build script (openenv build) handles context detection and sets appropriate build args.
 
-ARG BASE_IMAGE=ghcr.io/meta-pytorch/openenv-base:latest
+ARG BASE_IMAGE=ghcr.io/meta-pytorch/openenv-base:py311
 FROM ${BASE_IMAGE} AS builder
 
 WORKDIR /app
@@ -47,12 +41,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         uv sync --no-install-project --no-editable; \
     fi
 
-RUN --mount=type=cache,target=/root/.cache/uv \
-    if [ -f uv.lock ]; then \
-        uv sync --frozen --no-editable; \
-    else \
-        uv sync --no-editable; \
-    fi
+RUN python -c "import sys; print(sys.executable)"
 
 # Final runtime stage
 FROM ${BASE_IMAGE}
@@ -63,13 +52,13 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy the virtual environment from builder
+# Copy virtual environment
 COPY --from=builder /app/env/.venv /app/.venv
 
-# Copy the environment code
+# Copy environment code
 COPY --from=builder /app/env /app/env
 
-# Set PATH to use the virtual environment
+# Use virtual environment
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Set PYTHONPATH so imports work correctly

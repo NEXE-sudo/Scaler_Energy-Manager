@@ -31,6 +31,7 @@ import os
 import traceback
 import warnings
 from typing import Any, Dict, Optional
+import requests
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
@@ -287,7 +288,10 @@ async def health_check() -> JSONResponse:
 
 @app.get("/")
 async def root():
-    return {"status": "ok"}
+    return {
+        "message": "API running",
+        "ui": "/ui"
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -441,155 +445,178 @@ async def buffer_status() -> JSONResponse:
         "task_id": env.current_task_id,
     })
 
-def run_demo():
-    return "Demo running (connect your model here)"
+BASE_URL = ""  # required for HF Spaces
 
-    with gr.Blocks() as demo:
+def reset_env(task):
+    return requests.post(f"{BASE_URL}/reset", json={"task_id": task}).json()
 
-        gr.Markdown("""
-    # Energy Grid AI — A Simple System with a Real Problem
+def get_state():
+    return requests.get(f"{BASE_URL}/state").json()
 
-    ## Why this project exists
+def run_dispatch():
+    action = {
+        "coal_delta": 50.0,
+        "battery_mode": "discharge",
+        "hydro_delta": 0.0,
+        "nuclear_delta": 0.0,
+        "emergency_coal_boost": False
+    }
+    return requests.post(f"{BASE_URL}/step/dispatch", json=action).json()
 
-    This project did not start as an “AI for energy systems” idea.
+with gr.Blocks() as demo:
 
-    It started with a much simpler frustration.
+    gr.Markdown("""
+# Energy Grid AI — A Simple System with a Real Problem
 
-    While building larger projects using language models, I kept running into the same issue:
-    - one model would generate a large chunk of code,
-    - then I would switch models (because of rate limits or cost),
-    - and everything would break.
+## Why this project exists
 
-    The second model did not understand what the first one had done. It lost context. It made wrong assumptions. The system became unstable.
+This project did not start as an “AI for energy systems” idea.
 
-    This led to a simple question:
+It started with a much simpler frustration.
 
-    > What if different “agents” could cooperate instead of replace each other?
+While building larger projects using language models, I kept running into the same issue:
+- one model would generate a large chunk of code,
+- then I would switch models (because of rate limits or cost),
+- and everything would break.
 
-    That idea became the foundation of this project.
+The second model did not understand what the first one had done. It lost context. It made wrong assumptions. The system became unstable.
 
-    ---
+This led to a simple question:
 
-    ## From code instability to real-world systems
+> What if different “agents” could cooperate instead of replace each other?
 
-    Around the same time, there were large-scale blackouts in Cuba.
+That idea became the foundation of this project.
 
-    Electricity systems are not very different from what I was facing:
-    - multiple components,
-    - each making decisions,
-    - all needing to stay in sync.
+---
 
-    If one part behaves unpredictably, the whole system can fail.
+## From code instability to real-world systems
 
-    So I reframed the problem:
+Around the same time, there were large-scale blackouts in Cuba.
 
-    > Can we build a system where multiple decision-makers coordinate to keep something stable?
+Electricity systems are not very different from what I was facing:
+- multiple components,
+- each making decisions,
+- all needing to stay in sync.
 
-    ---
+If one part behaves unpredictably, the whole system can fail.
 
-    ## The core idea (in simple terms)
+So I reframed the problem:
 
-    Imagine a city’s electricity system like a group of people running a kitchen:
+> Can we build a system where multiple decision-makers coordinate to keep something stable?
 
-    - One person decides how much food is needed (planning)
-    - One person actually cooks (dispatch)
-    - One person manages costs and supplies (market)
+---
 
-    If they don’t communicate properly:
-    - too much food → waste
-    - too little → shortage
-    - bad timing → chaos
+## The core idea (in simple terms)
 
-    The same thing happens in power grids.
+Imagine a city’s electricity system like a group of people running a kitchen:
 
-    The goal is simple:
-    - keep supply equal to demand
-    - keep the system stable
-    - avoid failure (blackouts)
+- One person decides how much food is needed (planning)
+- One person actually cooks (dispatch)
+- One person manages costs and supplies (market)
 
-    ---
+If they don’t communicate properly:
+- too much food → waste
+- too little → shortage
+- bad timing → chaos
 
-    ## What was built
+The same thing happens in power grids.
 
-    A simulation of an electricity grid where:
+The goal is simple:
+- keep supply equal to demand
+- keep the system stable
+- avoid failure (blackouts)
 
-    - demand changes over time
-    - supply must be adjusted continuously
-    - decisions are made step-by-step
+---
 
-    On top of this, I trained a lightweight AI model (LoRA fine-tuned TinyLlama) to make these decisions.
+## What was built
 
-    Each step, the model:
-    1. reads the current grid situation
-    2. reasons about what to do
-    3. outputs an action in a structured format
+A simulation of an electricity grid where:
 
-    ---
+- demand changes over time
+- supply must be adjusted continuously
+- decisions are made step-by-step
 
-    ## What improved
+On top of this, I trained a lightweight AI model (LoRA fine-tuned TinyLlama) to make these decisions.
 
-    The fine-tuned model performed better than the base model:
+Each step, the model:
+1. reads the current grid situation
+2. reasons about what to do
+3. outputs an action in a structured format
 
-    - Score improved from **0.24 to 0.408**
-    - About **70% improvement in task performance**
+---
 
-    This means:
-    - better decisions
-    - more consistent behaviour
-    - clearer outputs
+## What improved
 
-    ---
+The fine-tuned model performed better than the base model:
 
-    ## But something important showed up
+- Score improved from **0.24 to 0.408**
+- About **70% improvement in task performance**
 
-    Even though the score improved, the system sometimes became unstable.
+This means:
+- better decisions
+- more consistent behaviour
+- clearer outputs
 
-    In simple terms:
-    - it tried to optimise too aggressively
-    - and ended up causing failures (blackouts)
+---
 
-    This reveals something important:
+## But something important showed up
 
-    > Optimising for performance is not the same as ensuring stability.
+Even though the score improved, the system sometimes became unstable.
 
-    This is true not just for AI, but for real-world systems as well.
+In simple terms:
+- it tried to optimise too aggressively
+- and ended up causing failures (blackouts)
 
-    ---
+This reveals something important:
 
-    ## What this project shows
+> Optimising for performance is not the same as ensuring stability.
 
-    1. Multiple agents (or decision-makers) need coordination, not replacement  
-    2. Structured outputs make systems more reliable  
-    3. Optimisation without constraints can lead to failure  
-    4. Small models, when fine-tuned properly, can behave surprisingly well  
+This is true not just for AI, but for real-world systems as well.
 
-    ---
+---
 
-    ## Visual results
+## What this project shows
 
-    Below are two key results:
+1. Multiple agents (or decision-makers) need coordination, not replacement  
+2. Structured outputs make systems more reliable  
+3. Optimisation without constraints can lead to failure  
+4. Small models, when fine-tuned properly, can behave surprisingly well  
 
-    - Reward over time (how well the system behaves step-by-step)
-    - Comparison between base model and fine-tuned model
+---
 
-    ---
+## Visual results
 
-    ## Demo
+Below are two key results:
 
-    You can run the model below to see how it behaves in the simulated environment.
+- Reward over time (how well the system behaves step-by-step)
+- Comparison between base model and fine-tuned model
 
-    Each step, it will:
-    - analyse the grid
-    - produce a decision
-    - affect the system
+---
 
-    The goal is always the same:
-    keep the system stable and avoid collapse.
-    """)
+## Demo
 
-        gr.Button("Run Demo").click(run_demo)
+You can run the model below to see how it behaves in the simulated environment.
 
-    demo.launch()
+Each step, it will:
+- analyse the grid
+- produce a decision
+- affect the system
+
+The goal is always the same:
+keep the system stable and avoid collapse.
+""")
+
+    task = gr.Dropdown(["easy", "medium", "hard"], value="easy", label="Task")
+
+    state_output = gr.JSON(label="Grid State")
+
+    with gr.Row():
+        gr.Button("Reset").click(reset_env, inputs=task, outputs=state_output)
+        gr.Button("Get State").click(get_state, outputs=state_output)
+
+    gr.Button("Run Dispatch Step").click(run_dispatch, outputs=state_output)
+    
+app = mount_gradio_app(app, demo, path="/ui")
 
 # ---------------------------------------------------------------------------
 # Entry point

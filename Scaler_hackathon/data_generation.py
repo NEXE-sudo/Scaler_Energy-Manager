@@ -97,13 +97,14 @@ def run_episode_with_collection(
         # --- ROUND 1: PROPOSALS ---
         proposals = {}
         for agent_type in ["planning", "dispatch", "market"]:
+            system_prompt = ""
             # Task 2: Gated Planning
             if agent_type == "planning":
                 from server.baseline import _is_major_event
                 if not _is_major_event(obs, prev_obs) and last_planning_action is not None:
                     proposals[agent_type] = {"action": action_dict, "response": response_text, "prompt": user_prompt, "system": data["system"], "called": True}
                     obs_negotiation = env.step_planning(last_planning_action)
-                    proposals[agent_type] = {"action": last_planning_action, "called": False, "system": ""}
+                    proposals[agent_type] = {"action": last_planning_action, "called": False, "system": "", "response": "", "prompt": ""}
                     continue
 
             model_to_use = model_map.get(agent_type, model_map.get("default", "llama-3.1-8b-instant"))
@@ -143,7 +144,7 @@ def run_episode_with_collection(
                 else:
                     action_dict = MarketAgentAction(demand_response_mw=0.0, grid_export_mw=0.0, grid_import_mw=0.0, coal_price_bid=0.0)
             
-            proposals[agent_type] = {"action": action_dict, "response": response_text, "prompt": user_prompt, "called": True}
+            proposals[agent_type] = {"action": action_dict, "response": response_text, "prompt": user_prompt, "system": system_prompt, "called": True}
             
             if agent_type == "planning": obs_negotiation = env.step_planning(action_dict)
             elif agent_type == "dispatch": obs_negotiation = env.step_dispatch(action_dict)
@@ -317,7 +318,7 @@ def generate_dataset(
 def main():
     parser = argparse.ArgumentParser(description="Collect LLM rollout data from energy grid env")
     parser.add_argument("--output",   type=str,   default="dataset_raw.jsonl")
-    parser.add_argument("--episodes", type=int,   default=5,  help="Episodes per task")
+    parser.add_argument("--episodes", type=int,   default=2,  help="Episodes per task")
     parser.add_argument("--tasks",    nargs="+",  default=["easy", "medium", "hard"],
                         choices=["easy", "medium", "hard"])
     parser.add_argument("--quiet",    action="store_true")
