@@ -23,6 +23,7 @@ Additional endpoints (unchanged):
 from __future__ import annotations
 
 import gradio as gr
+from gradio.routes import mount_gradio_app
 
 import asyncio
 import json
@@ -443,152 +444,152 @@ async def buffer_status() -> JSONResponse:
 def run_demo():
     return "Demo running (connect your model here)"
 
-with gr.Blocks() as demo:
+    with gr.Blocks() as demo:
 
-    gr.Markdown("""
-# Energy Grid AI — A Simple System with a Real Problem
+        gr.Markdown("""
+    # Energy Grid AI — A Simple System with a Real Problem
 
-## Why this project exists
+    ## Why this project exists
 
-This project did not start as an “AI for energy systems” idea.
+    This project did not start as an “AI for energy systems” idea.
 
-It started with a much simpler frustration.
+    It started with a much simpler frustration.
 
-While building larger projects using language models, I kept running into the same issue:
-- one model would generate a large chunk of code,
-- then I would switch models (because of rate limits or cost),
-- and everything would break.
+    While building larger projects using language models, I kept running into the same issue:
+    - one model would generate a large chunk of code,
+    - then I would switch models (because of rate limits or cost),
+    - and everything would break.
 
-The second model did not understand what the first one had done. It lost context. It made wrong assumptions. The system became unstable.
+    The second model did not understand what the first one had done. It lost context. It made wrong assumptions. The system became unstable.
 
-This led to a simple question:
+    This led to a simple question:
 
-> What if different “agents” could cooperate instead of replace each other?
+    > What if different “agents” could cooperate instead of replace each other?
 
-That idea became the foundation of this project.
+    That idea became the foundation of this project.
 
----
+    ---
 
-## From code instability to real-world systems
+    ## From code instability to real-world systems
 
-Around the same time, there were large-scale blackouts in Cuba.
+    Around the same time, there were large-scale blackouts in Cuba.
 
-Electricity systems are not very different from what I was facing:
-- multiple components,
-- each making decisions,
-- all needing to stay in sync.
+    Electricity systems are not very different from what I was facing:
+    - multiple components,
+    - each making decisions,
+    - all needing to stay in sync.
 
-If one part behaves unpredictably, the whole system can fail.
+    If one part behaves unpredictably, the whole system can fail.
 
-So I reframed the problem:
+    So I reframed the problem:
 
-> Can we build a system where multiple decision-makers coordinate to keep something stable?
+    > Can we build a system where multiple decision-makers coordinate to keep something stable?
 
----
+    ---
 
-## The core idea (in simple terms)
+    ## The core idea (in simple terms)
 
-Imagine a city’s electricity system like a group of people running a kitchen:
+    Imagine a city’s electricity system like a group of people running a kitchen:
 
-- One person decides how much food is needed (planning)
-- One person actually cooks (dispatch)
-- One person manages costs and supplies (market)
+    - One person decides how much food is needed (planning)
+    - One person actually cooks (dispatch)
+    - One person manages costs and supplies (market)
 
-If they don’t communicate properly:
-- too much food → waste
-- too little → shortage
-- bad timing → chaos
+    If they don’t communicate properly:
+    - too much food → waste
+    - too little → shortage
+    - bad timing → chaos
 
-The same thing happens in power grids.
+    The same thing happens in power grids.
 
-The goal is simple:
-- keep supply equal to demand
-- keep the system stable
-- avoid failure (blackouts)
+    The goal is simple:
+    - keep supply equal to demand
+    - keep the system stable
+    - avoid failure (blackouts)
 
----
+    ---
 
-## What was built
+    ## What was built
 
-A simulation of an electricity grid where:
+    A simulation of an electricity grid where:
 
-- demand changes over time
-- supply must be adjusted continuously
-- decisions are made step-by-step
+    - demand changes over time
+    - supply must be adjusted continuously
+    - decisions are made step-by-step
 
-On top of this, I trained a lightweight AI model (LoRA fine-tuned TinyLlama) to make these decisions.
+    On top of this, I trained a lightweight AI model (LoRA fine-tuned TinyLlama) to make these decisions.
 
-Each step, the model:
-1. reads the current grid situation
-2. reasons about what to do
-3. outputs an action in a structured format
+    Each step, the model:
+    1. reads the current grid situation
+    2. reasons about what to do
+    3. outputs an action in a structured format
 
----
+    ---
 
-## What improved
+    ## What improved
 
-The fine-tuned model performed better than the base model:
+    The fine-tuned model performed better than the base model:
 
-- Score improved from **0.24 to 0.408**
-- About **70% improvement in task performance**
+    - Score improved from **0.24 to 0.408**
+    - About **70% improvement in task performance**
 
-This means:
-- better decisions
-- more consistent behaviour
-- clearer outputs
+    This means:
+    - better decisions
+    - more consistent behaviour
+    - clearer outputs
 
----
+    ---
 
-## But something important showed up
+    ## But something important showed up
 
-Even though the score improved, the system sometimes became unstable.
+    Even though the score improved, the system sometimes became unstable.
 
-In simple terms:
-- it tried to optimise too aggressively
-- and ended up causing failures (blackouts)
+    In simple terms:
+    - it tried to optimise too aggressively
+    - and ended up causing failures (blackouts)
 
-This reveals something important:
+    This reveals something important:
 
-> Optimising for performance is not the same as ensuring stability.
+    > Optimising for performance is not the same as ensuring stability.
 
-This is true not just for AI, but for real-world systems as well.
+    This is true not just for AI, but for real-world systems as well.
 
----
+    ---
 
-## What this project shows
+    ## What this project shows
 
-1. Multiple agents (or decision-makers) need coordination, not replacement  
-2. Structured outputs make systems more reliable  
-3. Optimisation without constraints can lead to failure  
-4. Small models, when fine-tuned properly, can behave surprisingly well  
+    1. Multiple agents (or decision-makers) need coordination, not replacement  
+    2. Structured outputs make systems more reliable  
+    3. Optimisation without constraints can lead to failure  
+    4. Small models, when fine-tuned properly, can behave surprisingly well  
 
----
+    ---
 
-## Visual results
+    ## Visual results
 
-Below are two key results:
+    Below are two key results:
 
-- Reward over time (how well the system behaves step-by-step)
-- Comparison between base model and fine-tuned model
+    - Reward over time (how well the system behaves step-by-step)
+    - Comparison between base model and fine-tuned model
 
----
+    ---
 
-## Demo
+    ## Demo
 
-You can run the model below to see how it behaves in the simulated environment.
+    You can run the model below to see how it behaves in the simulated environment.
 
-Each step, it will:
-- analyse the grid
-- produce a decision
-- affect the system
+    Each step, it will:
+    - analyse the grid
+    - produce a decision
+    - affect the system
 
-The goal is always the same:
-keep the system stable and avoid collapse.
-""")
+    The goal is always the same:
+    keep the system stable and avoid collapse.
+    """)
 
-    gr.Button("Run Demo").click(run_demo)
+        gr.Button("Run Demo").click(run_demo)
 
-demo.launch()
+    demo.launch()
 
 # ---------------------------------------------------------------------------
 # Entry point

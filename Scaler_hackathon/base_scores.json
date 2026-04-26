@@ -3,24 +3,24 @@
     "easy": {
       "task_id": "easy",
       "task_name": "Baseline Dispatch",
-      "score": 0.2647,
+      "score": 0.2833,
       "component_scores": {
-        "reliability": 0.2083,
-        "cost_efficiency": 0.3493
+        "reliability": 0.25,
+        "cost_efficiency": 0.3333
       },
       "weighted_components": {
-        "reliability": 0.125,
-        "cost_efficiency": 0.1397
+        "reliability": 0.15,
+        "cost_efficiency": 0.1333
       },
       "blackout_occurred": false,
       "steps_completed": 20,
       "total_steps": 24,
-      "total_reward": -1375.7387,
+      "total_reward": -1332.9357,
       "metadata": {
-        "total_cumulative_cost": 9.76,
-        "total_cumulative_emissions_tons": 8784.0,
+        "total_cumulative_cost": 10.0,
+        "total_cumulative_emissions_tons": 9000.0,
         "plants_built": [],
-        "final_battery_pct": 72.0,
+        "final_battery_pct": 100.0,
         "final_reservoir_pct": 0.0,
         "final_capital_remaining": 0.0
       },
@@ -28,9 +28,9 @@
         {
           "step": 1,
           "demand": 417.45,
-          "supply": 420.0,
-          "frequency": 49.8296,
-          "blackoutRisk": "low",
+          "supply": 400.0,
+          "frequency": 49.9554,
+          "blackoutRisk": "none",
           "planning": {
             "thought": "Continuing baseline strategy.",
             "action": "none"
@@ -38,9 +38,77 @@
           "dispatch": {
             "thought": "Optimizing real-time dispatch.",
             "controls": {
-              "coal_delta": 20.0,
+              "coal_delta": 0.0,
               "hydro_delta": 0.0,
-              "battery_mode": "charge"
+              "battery_mode": "idle"
+            }
+          },
+          "market": {
+            "thought": "Managing economic efficiency.",
+            "controls": {
+              "demand_response": 17.0,
+              "import_export": "0.0 MW import"
+            }
+          },
+          "finalAction": {
+            "coal_delta": 0.0,
+            "hydro_delta": 0.0,
+            "battery_mode": "idle",
+            "demand_response": 17.0
+          },
+          "reward": -6.773487339672115,
+          "status": "stable"
+        },
+        {
+          "step": 2,
+          "demand": 395.66,
+          "supply": 400.0,
+          "frequency": 50.0199,
+          "blackoutRisk": "none",
+          "planning": {
+            "thought": "Continuing baseline strategy.",
+            "action": "none"
+          },
+          "dispatch": {
+            "thought": "Optimizing real-time dispatch.",
+            "controls": {
+              "coal_delta": 0.0,
+              "hydro_delta": 0.0,
+              "battery_mode": "idle"
+            }
+          },
+          "market": {
+            "thought": "Managing economic efficiency.",
+            "controls": {
+              "demand_response": 0.0,
+              "import_export": "17.0 MW import"
+            }
+          },
+          "finalAction": {
+            "coal_delta": 0.0,
+            "hydro_delta": 0.0,
+            "battery_mode": "idle",
+            "demand_response": 0.0
+          },
+          "reward": -6.985771492745767,
+          "status": "stable"
+        },
+        {
+          "step": 3,
+          "demand": 398.13,
+          "supply": 400.0,
+          "frequency": 50.0231,
+          "blackoutRisk": "none",
+          "planning": {
+            "thought": "Continuing baseline strategy.",
+            "action": "none"
+          },
+          "dispatch": {
+            "thought": "Optimizing real-time dispatch.",
+            "controls": {
+              "coal_delta": 0.0,
+              "hydro_delta": 0.0,
+              "battery_mode": "idle"
             }
           },
           "market": {
@@ -51,20 +119,122 @@
             }
           },
           "finalAction": {
-            "coal_delta": 20.0,
+            "coal_delta": 0.0,
             "hydro_delta": 0.0,
-            "battery_mode": "charge",
+            "battery_mode": "idle",
             "demand_response": 0.0
           },
-          "reward": -15.66311732169745,
+          "reward": -3.0985732324423974,
           "status": "stable"
         },
         {
-          "step": 2,
-          "demand": 395.66,
-          "supply": 420.0,
-          "frequency": 49.8047,
+          "step": 4,
+          "demand": 379.93,
+          "supply": 400.0,
+          "frequency": 50.0773,
           "blackoutRisk": "none",
+          "planning": {
+            "thought": "Continuing baseline strategy.",
+            "action": "none"
+          },
+          "dispatch": {
+            "thought": "Optimizing real-time dispatch.",
+            "controls": {
+              "coal_delta": 0.0,
+              "hydro_delta": 0.0,
+              "battery_mode": "idle"
+            }
+          },
+          "market": {
+            "thought": "Managing economic efficiency.",
+            "controls": {
+              "demand_response": 0.0,
+              "import_export": "0.0 MW import"
+            }
+          },
+          "finalAction": {
+            "coal_delta": 0.0,
+            "hydro_delta": 0.0,
+            "battery_mode": "idle",
+            "demand_response": 0.0
+          },
+          "reward": -3.4131412268538077,
+          "status": "stable"
+        },
+        {
+          "step": 5,
+          "demand": 380.64,
+          "supply": 400.0,
+          "frequency": 50.124,
+          "blackoutRisk": "none",
+          "planning": {
+            "thought": "Continuing baseline strategy.",
+            "action": "none"
+          },
+          "dispatch": {
+            "thought": "Optimizing real-time dispatch.",
+            "controls": {
+              "coal_delta": 0.0,
+              "hydro_delta": 0.0,
+              "battery_mode": "idle"
+            }
+          },
+          "market": {
+            "thought": "Managing economic efficiency.",
+            "controls": {
+              "demand_response": 0.0,
+              "import_export": "0.0 MW import"
+            }
+          },
+          "finalAction": {
+            "coal_delta": 0.0,
+            "hydro_delta": 0.0,
+            "battery_mode": "idle",
+            "demand_response": 0.0
+          },
+          "reward": -3.6033498656686325,
+          "status": "stable"
+        },
+        {
+          "step": 6,
+          "demand": 397.47,
+          "supply": 400.0,
+          "frequency": 50.4,
+          "blackoutRisk": "medium",
+          "planning": {
+            "thought": "Continuing baseline strategy.",
+            "action": "none"
+          },
+          "dispatch": {
+            "thought": "Optimizing real-time dispatch.",
+            "controls": {
+              "coal_delta": 0.0,
+              "hydro_delta": 0.0,
+              "battery_mode": "idle"
+            }
+          },
+          "market": {
+            "thought": "Managing economic efficiency.",
+            "controls": {
+              "demand_response": 0.0,
+              "import_export": "100.0 MW import"
+            }
+          },
+          "finalAction": {
+            "coal_delta": 0.0,
+            "hydro_delta": 0.0,
+            "battery_mode": "idle",
+            "demand_response": 0.0
+          },
+          "reward": -24.91345574084316,
+          "status": "warning"
+        },
+        {
+          "step": 7,
+          "demand": 495.65,
+          "supply": 400.0,
+          "frequency": 49.9504,
+          "blackoutRisk": "medium",
           "planning": {
             "thought": "Continuing baseline strategy.",
             "action": "none"
@@ -90,184 +260,14 @@
             "battery_mode": "charge",
             "demand_response": 0.0
           },
-          "reward": -9.911283031527518,
+          "reward": -40.13900348148078,
           "status": "stable"
-        },
-        {
-          "step": 3,
-          "demand": 398.13,
-          "supply": 420.0,
-          "frequency": 49.872,
-          "blackoutRisk": "none",
-          "planning": {
-            "thought": "Continuing baseline strategy.",
-            "action": "none"
-          },
-          "dispatch": {
-            "thought": "Optimizing real-time dispatch.",
-            "controls": {
-              "coal_delta": 0.0,
-              "hydro_delta": 0.0,
-              "battery_mode": "charge"
-            }
-          },
-          "market": {
-            "thought": "Managing economic efficiency.",
-            "controls": {
-              "demand_response": 0.0,
-              "import_export": "0.0 MW import"
-            }
-          },
-          "finalAction": {
-            "coal_delta": 0.0,
-            "hydro_delta": 0.0,
-            "battery_mode": "charge",
-            "demand_response": 0.0
-          },
-          "reward": -3.786438240284116,
-          "status": "stable"
-        },
-        {
-          "step": 4,
-          "demand": 379.93,
-          "supply": 400.0,
-          "frequency": 49.9412,
-          "blackoutRisk": "none",
-          "planning": {
-            "thought": "Continuing baseline strategy.",
-            "action": "none"
-          },
-          "dispatch": {
-            "thought": "Optimizing real-time dispatch.",
-            "controls": {
-              "coal_delta": -20.0,
-              "hydro_delta": 0.0,
-              "battery_mode": "idle"
-            }
-          },
-          "market": {
-            "thought": "Managing economic efficiency.",
-            "controls": {
-              "demand_response": 0.0,
-              "import_export": "0.0 MW import"
-            }
-          },
-          "finalAction": {
-            "coal_delta": -20.0,
-            "hydro_delta": 0.0,
-            "battery_mode": "idle",
-            "demand_response": 0.0
-          },
-          "reward": -3.40851136503209,
-          "status": "stable"
-        },
-        {
-          "step": 5,
-          "demand": 380.64,
-          "supply": 400.0,
-          "frequency": 50.0011,
-          "blackoutRisk": "none",
-          "planning": {
-            "thought": "Continuing baseline strategy.",
-            "action": "none"
-          },
-          "dispatch": {
-            "thought": "Optimizing real-time dispatch.",
-            "controls": {
-              "coal_delta": 0.0,
-              "hydro_delta": 0.0,
-              "battery_mode": "charge"
-            }
-          },
-          "market": {
-            "thought": "Managing economic efficiency.",
-            "controls": {
-              "demand_response": 0.0,
-              "import_export": "0.0 MW import"
-            }
-          },
-          "finalAction": {
-            "coal_delta": 0.0,
-            "hydro_delta": 0.0,
-            "battery_mode": "charge",
-            "demand_response": 0.0
-          },
-          "reward": -3.3222970900123214,
-          "status": "stable"
-        },
-        {
-          "step": 6,
-          "demand": 397.47,
-          "supply": 400.0,
-          "frequency": 50.0081,
-          "blackoutRisk": "none",
-          "planning": {
-            "thought": "Continuing baseline strategy.",
-            "action": "none"
-          },
-          "dispatch": {
-            "thought": "Optimizing real-time dispatch.",
-            "controls": {
-              "coal_delta": 0.0,
-              "hydro_delta": 0.0,
-              "battery_mode": "idle"
-            }
-          },
-          "market": {
-            "thought": "Managing economic efficiency.",
-            "controls": {
-              "demand_response": 0.0,
-              "import_export": "0.0 MW import"
-            }
-          },
-          "finalAction": {
-            "coal_delta": 0.0,
-            "hydro_delta": 0.0,
-            "battery_mode": "idle",
-            "demand_response": 0.0
-          },
-          "reward": -3.153647648460216,
-          "status": "stable"
-        },
-        {
-          "step": 7,
-          "demand": 495.65,
-          "supply": 400.0,
-          "frequency": 49.7383,
-          "blackoutRisk": "low",
-          "planning": {
-            "thought": "Continuing baseline strategy.",
-            "action": "none"
-          },
-          "dispatch": {
-            "thought": "Optimizing real-time dispatch.",
-            "controls": {
-              "coal_delta": 0.0,
-              "hydro_delta": 0.0,
-              "battery_mode": "idle"
-            }
-          },
-          "market": {
-            "thought": "Managing economic efficiency.",
-            "controls": {
-              "demand_response": 0.0,
-              "import_export": "0.0 MW import"
-            }
-          },
-          "finalAction": {
-            "coal_delta": 0.0,
-            "hydro_delta": 0.0,
-            "battery_mode": "idle",
-            "demand_response": 0.0
-          },
-          "reward": -27.94201768805292,
-          "status": "warning"
         },
         {
           "step": 8,
           "demand": 547.6,
-          "supply": 400.0,
-          "frequency": 49.6306,
+          "supply": 500.0,
+          "frequency": 50.0732,
           "blackoutRisk": "low",
           "planning": {
             "thought": "Continuing baseline strategy.",
@@ -276,7 +276,7 @@
           "dispatch": {
             "thought": "Optimizing real-time dispatch.",
             "controls": {
-              "coal_delta": 0.0,
+              "coal_delta": 50.0,
               "hydro_delta": 0.0,
               "battery_mode": "charge"
             }
@@ -284,24 +284,24 @@
           "market": {
             "thought": "Managing economic efficiency.",
             "controls": {
-              "demand_response": 0.0,
+              "demand_response": 96.0,
               "import_export": "100.0 MW import"
             }
           },
           "finalAction": {
-            "coal_delta": 0.0,
+            "coal_delta": 50.0,
             "hydro_delta": 0.0,
             "battery_mode": "charge",
-            "demand_response": 0.0
+            "demand_response": 96.0
           },
-          "reward": -36.77736498250536,
-          "status": "warning"
+          "reward": -39.009965817461385,
+          "status": "stable"
         },
         {
           "step": 9,
           "demand": 713.29,
-          "supply": 400.0,
-          "frequency": 49.4891,
+          "supply": 500.0,
+          "frequency": 49.694,
           "blackoutRisk": "medium",
           "planning": {
             "thought": "Continuing baseline strategy.",
@@ -312,30 +312,302 @@
             "controls": {
               "coal_delta": 0.0,
               "hydro_delta": 0.0,
-              "battery_mode": "discharge"
+              "battery_mode": "idle"
             }
           },
           "market": {
             "thought": "Managing economic efficiency.",
             "controls": {
-              "demand_response": 148.0,
-              "import_export": "100.0 MW import"
+              "demand_response": 0.0,
+              "import_export": "48.0 MW import"
             }
           },
           "finalAction": {
             "coal_delta": 0.0,
             "hydro_delta": 0.0,
-            "battery_mode": "discharge",
-            "demand_response": 148.0
+            "battery_mode": "idle",
+            "demand_response": 0.0
           },
-          "reward": -64.6922596183203,
+          "reward": -56.599875044406865,
           "status": "warning"
         },
         {
           "step": 10,
           "demand": 778.28,
           "supply": 500.0,
-          "frequency": 49.3305,
+          "frequency": 49.4738,
+          "blackoutRisk": "medium",
+          "planning": {
+            "thought": "Continuing baseline strategy.",
+            "action": "none"
+          },
+          "dispatch": {
+            "thought": "Optimizing real-time dispatch.",
+            "controls": {
+              "coal_delta": 0.0,
+              "hydro_delta": 0.0,
+              "battery_mode": "idle"
+            }
+          },
+          "market": {
+            "thought": "Managing economic efficiency.",
+            "controls": {
+              "demand_response": 0.0,
+              "import_export": "100.0 MW import"
+            }
+          },
+          "finalAction": {
+            "coal_delta": 0.0,
+            "hydro_delta": 0.0,
+            "battery_mode": "idle",
+            "demand_response": 0.0
+          },
+          "reward": -70.41903328648328,
+          "status": "warning"
+        },
+        {
+          "step": 11,
+          "demand": 832.77,
+          "supply": 600.0,
+          "frequency": 49.3622,
+          "blackoutRisk": "medium",
+          "planning": {
+            "thought": "Continuing baseline strategy.",
+            "action": "none"
+          },
+          "dispatch": {
+            "thought": "Optimizing real-time dispatch.",
+            "controls": {
+              "coal_delta": 100.0,
+              "hydro_delta": 0.0,
+              "battery_mode": "discharge"
+            }
+          },
+          "market": {
+            "thought": "Managing economic efficiency.",
+            "controls": {
+              "demand_response": 0.0,
+              "import_export": "0.0 MW import"
+            }
+          },
+          "finalAction": {
+            "coal_delta": 100.0,
+            "hydro_delta": 0.0,
+            "battery_mode": "discharge",
+            "demand_response": 0.0
+          },
+          "reward": -54.921137811928936,
+          "status": "warning"
+        },
+        {
+          "step": 12,
+          "demand": 837.46,
+          "supply": 500.0,
+          "frequency": 49.0505,
+          "blackoutRisk": "high",
+          "planning": {
+            "thought": "Continuing baseline strategy.",
+            "action": "none"
+          },
+          "dispatch": {
+            "thought": "Optimizing real-time dispatch.",
+            "controls": {
+              "coal_delta": 100.0,
+              "hydro_delta": 0.0,
+              "battery_mode": "charge"
+            }
+          },
+          "market": {
+            "thought": "Managing economic efficiency.",
+            "controls": {
+              "demand_response": 0.0,
+              "import_export": "100.0 MW import"
+            }
+          },
+          "finalAction": {
+            "coal_delta": 100.0,
+            "hydro_delta": 0.0,
+            "battery_mode": "charge",
+            "demand_response": 0.0
+          },
+          "reward": -102.57834626890454,
+          "status": "warning"
+        },
+        {
+          "step": 13,
+          "demand": 865.0,
+          "supply": 500.0,
+          "frequency": 48.686,
+          "blackoutRisk": "critical",
+          "planning": {
+            "thought": "Continuing baseline strategy.",
+            "action": "none"
+          },
+          "dispatch": {
+            "thought": "Optimizing real-time dispatch.",
+            "controls": {
+              "coal_delta": 100.0,
+              "hydro_delta": 0.0,
+              "battery_mode": "charge"
+            }
+          },
+          "market": {
+            "thought": "Managing economic efficiency.",
+            "controls": {
+              "demand_response": 0.0,
+              "import_export": "0.0 MW import"
+            }
+          },
+          "finalAction": {
+            "coal_delta": 100.0,
+            "hydro_delta": 0.0,
+            "battery_mode": "charge",
+            "demand_response": 0.0
+          },
+          "reward": -137.64744431514762,
+          "status": "failure"
+        },
+        {
+          "step": 14,
+          "demand": 895.37,
+          "supply": 500.0,
+          "frequency": 48.6473,
+          "blackoutRisk": "high",
+          "planning": {
+            "thought": "Continuing baseline strategy.",
+            "action": "none"
+          },
+          "dispatch": {
+            "thought": "Optimizing real-time dispatch.",
+            "controls": {
+              "coal_delta": 0.0,
+              "hydro_delta": 0.0,
+              "battery_mode": "discharge"
+            }
+          },
+          "market": {
+            "thought": "Managing economic efficiency.",
+            "controls": {
+              "demand_response": 0.0,
+              "import_export": "100.0 MW import"
+            }
+          },
+          "finalAction": {
+            "coal_delta": 0.0,
+            "hydro_delta": 0.0,
+            "battery_mode": "discharge",
+            "demand_response": 0.0
+          },
+          "reward": -127.76880813135877,
+          "status": "failure"
+        },
+        {
+          "step": 15,
+          "demand": 888.53,
+          "supply": 500.0,
+          "frequency": 48.4607,
+          "blackoutRisk": "critical",
+          "planning": {
+            "thought": "Continuing baseline strategy.",
+            "action": "none"
+          },
+          "dispatch": {
+            "thought": "Optimizing real-time dispatch.",
+            "controls": {
+              "coal_delta": 100.0,
+              "hydro_delta": 0.0,
+              "battery_mode": "charge"
+            }
+          },
+          "market": {
+            "thought": "Managing economic efficiency.",
+            "controls": {
+              "demand_response": 0.0,
+              "import_export": "100.0 MW import"
+            }
+          },
+          "finalAction": {
+            "coal_delta": 100.0,
+            "hydro_delta": 0.0,
+            "battery_mode": "charge",
+            "demand_response": 0.0
+          },
+          "reward": -190.499295305508,
+          "status": "failure"
+        },
+        {
+          "step": 16,
+          "demand": 859.06,
+          "supply": 600.0,
+          "frequency": 48.5414,
+          "blackoutRisk": "high",
+          "planning": {
+            "thought": "Continuing baseline strategy.",
+            "action": "none"
+          },
+          "dispatch": {
+            "thought": "Optimizing real-time dispatch.",
+            "controls": {
+              "coal_delta": 100.0,
+              "hydro_delta": 0.0,
+              "battery_mode": "charge"
+            }
+          },
+          "market": {
+            "thought": "Managing economic efficiency.",
+            "controls": {
+              "demand_response": 0.0,
+              "import_export": "0.0 MW import"
+            }
+          },
+          "finalAction": {
+            "coal_delta": 100.0,
+            "hydro_delta": 0.0,
+            "battery_mode": "charge",
+            "demand_response": 0.0
+          },
+          "reward": -111.14860568713739,
+          "status": "failure"
+        },
+        {
+          "step": 17,
+          "demand": 813.69,
+          "supply": 600.0,
+          "frequency": 48.6674,
+          "blackoutRisk": "medium",
+          "planning": {
+            "thought": "Continuing baseline strategy.",
+            "action": "none"
+          },
+          "dispatch": {
+            "thought": "Optimizing real-time dispatch.",
+            "controls": {
+              "coal_delta": 0.0,
+              "hydro_delta": 0.0,
+              "battery_mode": "idle"
+            }
+          },
+          "market": {
+            "thought": "Managing economic efficiency.",
+            "controls": {
+              "demand_response": 0.0,
+              "import_export": "0.0 MW import"
+            }
+          },
+          "finalAction": {
+            "coal_delta": 0.0,
+            "hydro_delta": 0.0,
+            "battery_mode": "idle",
+            "demand_response": 0.0
+          },
+          "reward": -99.28217353081726,
+          "status": "failure"
+        },
+        {
+          "step": 18,
+          "demand": 812.4,
+          "supply": 700.0,
+          "frequency": 48.9265,
           "blackoutRisk": "medium",
           "planning": {
             "thought": "Continuing baseline strategy.",
@@ -352,93 +624,25 @@
           "market": {
             "thought": "Managing economic efficiency.",
             "controls": {
-              "demand_response": 150.0,
-              "import_export": "100.0 MW import"
-            }
-          },
-          "finalAction": {
-            "coal_delta": 100.0,
-            "hydro_delta": 0.0,
-            "battery_mode": "charge",
-            "demand_response": 150.0
-          },
-          "reward": -83.950979310808,
-          "status": "warning"
-        },
-        {
-          "step": 11,
-          "demand": 832.77,
-          "supply": 500.0,
-          "frequency": 48.9454,
-          "blackoutRisk": "critical",
-          "planning": {
-            "thought": "Continuing baseline strategy.",
-            "action": "none"
-          },
-          "dispatch": {
-            "thought": "Optimizing real-time dispatch.",
-            "controls": {
-              "coal_delta": 0.0,
-              "hydro_delta": 0.0,
-              "battery_mode": "charge"
-            }
-          },
-          "market": {
-            "thought": "Managing economic efficiency.",
-            "controls": {
               "demand_response": 0.0,
               "import_export": "0.0 MW import"
             }
           },
           "finalAction": {
-            "coal_delta": 0.0,
-            "hydro_delta": 0.0,
-            "battery_mode": "charge",
-            "demand_response": 0.0
-          },
-          "reward": -128.63051504809783,
-          "status": "failure"
-        },
-        {
-          "step": 12,
-          "demand": 837.46,
-          "supply": 600.0,
-          "frequency": 49.0612,
-          "blackoutRisk": "low",
-          "planning": {
-            "thought": "Continuing baseline strategy.",
-            "action": "none"
-          },
-          "dispatch": {
-            "thought": "Optimizing real-time dispatch.",
-            "controls": {
-              "coal_delta": 100.0,
-              "hydro_delta": 0.0,
-              "battery_mode": "charge"
-            }
-          },
-          "market": {
-            "thought": "Managing economic efficiency.",
-            "controls": {
-              "demand_response": 0.0,
-              "import_export": "100.0 MW import"
-            }
-          },
-          "finalAction": {
             "coal_delta": 100.0,
             "hydro_delta": 0.0,
             "battery_mode": "charge",
             "demand_response": 0.0
           },
-          "reward": -68.98145689426399,
-          "status": "warning"
+          "reward": -77.6244311349758,
+          "status": "failure"
         },
         {
-          "step": 13,
-          "demand": 865.0,
-          "supply": 500.0,
-          "frequency": 48.7041,
-          "blackoutRisk": "critical",
+          "step": 19,
+          "demand": 849.05,
+          "supply": 700.0,
+          "frequency": 49.0623,
+          "blackoutRisk": "low",
           "planning": {
             "thought": "Continuing baseline strategy.",
             "action": "none"
@@ -464,219 +668,15 @@
             "battery_mode": "idle",
             "demand_response": 0.0
           },
-          "reward": -136.13666367326135,
-          "status": "failure"
-        },
-        {
-          "step": 14,
-          "demand": 895.37,
-          "supply": 500.0,
-          "frequency": 48.6599,
-          "blackoutRisk": "high",
-          "planning": {
-            "thought": "Continuing baseline strategy.",
-            "action": "none"
-          },
-          "dispatch": {
-            "thought": "Optimizing real-time dispatch.",
-            "controls": {
-              "coal_delta": 0.0,
-              "hydro_delta": 0.0,
-              "battery_mode": "discharge"
-            }
-          },
-          "market": {
-            "thought": "Managing economic efficiency.",
-            "controls": {
-              "demand_response": 0.0,
-              "import_export": "100.0 MW import"
-            }
-          },
-          "finalAction": {
-            "coal_delta": 0.0,
-            "hydro_delta": 0.0,
-            "battery_mode": "discharge",
-            "demand_response": 0.0
-          },
-          "reward": -127.76564291491047,
-          "status": "failure"
-        },
-        {
-          "step": 15,
-          "demand": 888.53,
-          "supply": 500.0,
-          "frequency": 48.4696,
-          "blackoutRisk": "critical",
-          "planning": {
-            "thought": "Continuing baseline strategy.",
-            "action": "none"
-          },
-          "dispatch": {
-            "thought": "Optimizing real-time dispatch.",
-            "controls": {
-              "coal_delta": 100.0,
-              "hydro_delta": 0.0,
-              "battery_mode": "charge"
-            }
-          },
-          "market": {
-            "thought": "Managing economic efficiency.",
-            "controls": {
-              "demand_response": 0.0,
-              "import_export": "100.0 MW import"
-            }
-          },
-          "finalAction": {
-            "coal_delta": 100.0,
-            "hydro_delta": 0.0,
-            "battery_mode": "charge",
-            "demand_response": 0.0
-          },
-          "reward": -190.49161553776648,
-          "status": "failure"
-        },
-        {
-          "step": 16,
-          "demand": 859.06,
-          "supply": 500.0,
-          "frequency": 48.3843,
-          "blackoutRisk": "high",
-          "planning": {
-            "thought": "Continuing baseline strategy.",
-            "action": "none"
-          },
-          "dispatch": {
-            "thought": "Optimizing real-time dispatch.",
-            "controls": {
-              "coal_delta": 100.0,
-              "hydro_delta": 0.0,
-              "battery_mode": "discharge"
-            }
-          },
-          "market": {
-            "thought": "Managing economic efficiency.",
-            "controls": {
-              "demand_response": 0.0,
-              "import_export": "0.0 MW import"
-            }
-          },
-          "finalAction": {
-            "coal_delta": 100.0,
-            "hydro_delta": 0.0,
-            "battery_mode": "discharge",
-            "demand_response": 0.0
-          },
-          "reward": -162.75119119617273,
-          "status": "failure"
-        },
-        {
-          "step": 17,
-          "demand": 813.69,
-          "supply": 600.0,
-          "frequency": 48.7731,
-          "blackoutRisk": "medium",
-          "planning": {
-            "thought": "Continuing baseline strategy.",
-            "action": "none"
-          },
-          "dispatch": {
-            "thought": "Optimizing real-time dispatch.",
-            "controls": {
-              "coal_delta": 100.0,
-              "hydro_delta": 0.0,
-              "battery_mode": "discharge"
-            }
-          },
-          "market": {
-            "thought": "Managing economic efficiency.",
-            "controls": {
-              "demand_response": 0.0,
-              "import_export": "100.0 MW import"
-            }
-          },
-          "finalAction": {
-            "coal_delta": 100.0,
-            "hydro_delta": 0.0,
-            "battery_mode": "discharge",
-            "demand_response": 0.0
-          },
-          "reward": -83.27148549400972,
-          "status": "failure"
-        },
-        {
-          "step": 18,
-          "demand": 812.4,
-          "supply": 700.0,
-          "frequency": 48.9382,
-          "blackoutRisk": "medium",
-          "planning": {
-            "thought": "Continuing baseline strategy.",
-            "action": "none"
-          },
-          "dispatch": {
-            "thought": "Optimizing real-time dispatch.",
-            "controls": {
-              "coal_delta": 100.0,
-              "hydro_delta": 0.0,
-              "battery_mode": "charge"
-            }
-          },
-          "market": {
-            "thought": "Managing economic efficiency.",
-            "controls": {
-              "demand_response": 0.0,
-              "import_export": "0.0 MW import"
-            }
-          },
-          "finalAction": {
-            "coal_delta": 100.0,
-            "hydro_delta": 0.0,
-            "battery_mode": "charge",
-            "demand_response": 0.0
-          },
-          "reward": -90.09952653449255,
-          "status": "failure"
-        },
-        {
-          "step": 19,
-          "demand": 849.05,
-          "supply": 700.0,
-          "frequency": 49.0079,
-          "blackoutRisk": "medium",
-          "planning": {
-            "thought": "Continuing baseline strategy.",
-            "action": "none"
-          },
-          "dispatch": {
-            "thought": "Optimizing real-time dispatch.",
-            "controls": {
-              "coal_delta": 0.0,
-              "hydro_delta": 0.0,
-              "battery_mode": "charge"
-            }
-          },
-          "market": {
-            "thought": "Managing economic efficiency.",
-            "controls": {
-              "demand_response": 0.0,
-              "import_export": "0.0 MW import"
-            }
-          },
-          "finalAction": {
-            "coal_delta": 0.0,
-            "hydro_delta": 0.0,
-            "battery_mode": "charge",
-            "demand_response": 0.0
-          },
-          "reward": -59.38152638550417,
+          "reward": -46.867939835119245,
           "status": "warning"
         },
         {
           "step": 20,
           "demand": 855.53,
           "supply": 500.0,
-          "frequency": 49.0298,
-          "blackoutRisk": "medium",
+          "frequency": 48.8964,
+          "blackoutRisk": "high",
           "planning": {
             "thought": "Continuing baseline strategy.",
             "action": "none"
@@ -684,33 +684,33 @@
           "dispatch": {
             "thought": "Optimizing real-time dispatch.",
             "controls": {
-              "coal_delta": 0.0,
+              "coal_delta": 100.0,
               "hydro_delta": 0.0,
-              "battery_mode": "discharge"
+              "battery_mode": "charge"
             }
           },
           "market": {
             "thought": "Managing economic efficiency.",
             "controls": {
-              "demand_response": 149.0,
+              "demand_response": 0.0,
               "import_export": "100.0 MW import"
             }
           },
           "finalAction": {
-            "coal_delta": 0.0,
+            "coal_delta": 100.0,
             "hydro_delta": 0.0,
-            "battery_mode": "discharge",
-            "demand_response": 149.0
+            "battery_mode": "charge",
+            "demand_response": 0.0
           },
-          "reward": -75.62114617381944,
-          "status": "warning"
+          "reward": -129.64188305846187,
+          "status": "failure"
         }
       ]
     }
   },
   "summary_scores": {
-    "easy": 0.2647
+    "easy": 0.2833
   },
-  "average_score": 0.2647,
+  "average_score": 0.2833,
   "model": "llama-3.1-8b-instant"
 }
