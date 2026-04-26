@@ -1,7 +1,7 @@
 """
 PPO Training loop for Energy Grid Dispatch Agent.
 
-Curriculum: easy → medium → hard
+Curriculum: easy  medium  hard
 Each phase trains for a fixed number of environment steps.
 
 Usage:
@@ -21,7 +21,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-# ── Local imports ────────────────────────────────────────────────────────────
+#  Local imports 
 # Adjust sys.path so this can be run from any directory.
 ROOT = Path(__file__).parent.parent  # project root
 sys.path.insert(0, str(ROOT))
@@ -35,9 +35,9 @@ try:
 except ImportError:
     from Scaler_hackathon.server.energy_grid_environment import EnergyGridEnvironment
 
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 # Hyper-parameters
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 
 DEFAULTS = {
     # PPO
@@ -65,9 +65,9 @@ DEFAULTS = {
 }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 # PPO Update
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 
 def ppo_update(
     agent:      PPOAgent,
@@ -130,9 +130,9 @@ def ppo_update(
     }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 # Rollout collection
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 
 def collect_rollout(
     agent:      PPOAgent,
@@ -151,10 +151,10 @@ def collect_rollout(
         - Reward scaling
 
     Returns:
-        mean_ep_reward — mean reward of completed episodes
-        n_episodes     — number of completed episodes
-        steps_done     — steps collected
-        prev_action    — last action (for EMA continuity across rollouts)
+        mean_ep_reward  mean reward of completed episodes
+        n_episodes      number of completed episodes
+        steps_done      steps collected
+        prev_action     last action (for EMA continuity across rollouts)
     """
     buffer.reset()
     obs = env.reset(task_id)
@@ -213,7 +213,7 @@ def collect_rollout(
         # so we store the raw mean directly for the update.
         # Simple approach: use atanh of the scaled action as approx of cont_raw.
         def scaled_to_raw(vals):
-            """Inverse of (tanh(x)+1)/2 * (hi-lo) + lo → atanh(2*(v-lo)/(hi-lo)-1)"""
+            """Inverse of (tanh(x)+1)/2 * (hi-lo) + lo  atanh(2*(v-lo)/(hi-lo)-1)"""
             lo = np.array([-100., -80., -10., 0.], dtype=np.float32)
             hi = np.array([ 100.,  80.,  10., 150.], dtype=np.float32)
             norm = 2.0 * (vals - lo) / (hi - lo) - 1.0
@@ -269,9 +269,9 @@ def _dict_to_action(d: Dict[str, Any]):
     return EnergyGridAction(**{k: v for k, v in d.items()})
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 # Curriculum training
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 
 def train_task(
     agent:     PPOAgent,
@@ -339,12 +339,12 @@ def train_task(
     # Final checkpoint for this task
     final_path = checkpoint_dir / f"agent_{task_id}_final.pt"
     _save(agent, optimizer, final_path, env_steps, task_id)
-    print(f"  [✓] {task_id} complete | mean last-10 ep reward: {np.mean(rollout_rewards[-10:]):.1f}")
+    print(f"  [] {task_id} complete | mean last-10 ep reward: {np.mean(rollout_rewards[-10:]):.1f}")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 # Checkpoint helpers
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 
 def _save(agent, optimizer, path: Path, steps: int, task_id: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -357,7 +357,7 @@ def _save(agent, optimizer, path: Path, steps: int, task_id: str) -> None:
         "steps":     steps,
         "task_id":   task_id,
     }, path)
-    print(f"  [✓] Saved checkpoint → {path}")
+    print(f"  [] Saved checkpoint  {path}")
 
 
 def _load(agent, optimizer, path: Path) -> Tuple[int, str]:
@@ -370,9 +370,9 @@ def _load(agent, optimizer, path: Path) -> Tuple[int, str]:
     return ckpt.get("steps", 0), ckpt.get("task_id", "easy")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 # Entry point
-# ─────────────────────────────────────────────────────────────────────────────
+# 
 
 def parse_args():
     p = argparse.ArgumentParser(description="PPO training for Energy Grid Dispatch")
@@ -447,18 +447,18 @@ def main():
         if task_id == "easy":
             for g in optimizer.param_groups:
                 g["lr"] *= 0.5
-            print(f"  [lr anneal] LR → {cfg['lr'] * 0.5:.2e}")
+            print(f"  [lr anneal] LR  {cfg['lr'] * 0.5:.2e}")
         elif task_id == "medium":
             for g in optimizer.param_groups:
                 g["lr"] *= 0.5
-            print(f"  [lr anneal] LR → {cfg['lr'] * 0.25:.2e}")
+            print(f"  [lr anneal] LR  {cfg['lr'] * 0.25:.2e}")
 
         # Reset EMA / obs stats between tasks for better transfer
         agent._obs_mean  = None
         agent._obs_var   = None
         agent._obs_count = 0
 
-    print("\n[✓] Training complete.")
+    print("\n[] Training complete.")
 
 
 if __name__ == "__main__":
