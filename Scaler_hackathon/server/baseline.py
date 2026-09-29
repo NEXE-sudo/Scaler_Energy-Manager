@@ -33,7 +33,8 @@ import re
 import signal
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -57,12 +58,12 @@ from openai import OpenAI
 try:
     from .energy_grid_environment import EnergyGridEnvironment
     from .tasks import get_task, TASK_ORDER
-    from .llm_adapter import observation_to_text, extract_action_from_llm_output
+    from .llm_adapter import observation_to_text, extract_action_from_llm_output, try_extract_action_from_llm_output
     from ..models import EnergyGridAction, EnergyGridObservation
 except (ImportError, ValueError):
     from server.energy_grid_environment import EnergyGridEnvironment
     from server.tasks import get_task, TASK_ORDER
-    from server.llm_adapter import observation_to_text, extract_action_from_llm_output
+    from server.llm_adapter import observation_to_text, extract_action_from_llm_output, try_extract_action_from_llm_output
     from models import EnergyGridAction, EnergyGridObservation
 
 # ---------------------------------------------------------------------------
@@ -224,7 +225,11 @@ Action:
         return "Return valid JSON only."
 
 
-MAX_EVAL_STEPS = 20
+# Cap on steps per episode. Default 20 keeps the historical evaluation budget.
+# Set MAX_EVAL_STEPS=0 (or negative) to run full-length episodes. Results always
+# report `truncated` and `eval_step_cap` so capped runs are never mistaken for
+# full-episode scores.
+MAX_EVAL_STEPS = int(os.getenv("MAX_EVAL_STEPS", "20"))
 
 def _build_system_prompt(
     task_id: str = "easy",
@@ -318,24 +323,26 @@ PLAN:
 Be concise, decisive, and forwardlooking.
 """
 
-def _parse_action(response_text: str) -> EnergyGridAction:
-    """
-    Extract action from LLM response using the adapter.
-    
-    Now expects "Thought:" followed by "Action:" format, but gracefully handles
-    raw JSON responses for backward compatibility.
-    
-    Returns a fullyvalidated EnergyGridAction; on failure returns a
-    safe default (all zeros / idle).
+def _parse_action_checked(response_text: Optional[str]) -> Tuple[EnergyGridAction, str]:
+    """Parse model output into an action and report whether parsing succeeded.
+
+    Returns (action, status) with status one of:
+        "ok"          - a JSON action object was found and parsed
+        "empty"       - no text (e.g. reasoning models returning null content)
+        "unparseable" - text present but no usable JSON action
+    On "empty"/"unparseable" the action is the safe default (all zeros / idle);
+    callers must treat that as a failed call, not as a model decision.
     """
     if not response_text or not response_text.strip():
-        return EnergyGridAction() # SAFE_DEFAULT_ACTION equivalent
-    
-    # Use adapter to extract action dict from LLM output
-    action_dict = extract_action_from_llm_output(response_text)
-    
-    # Convert dict to EnergyGridAction
-    return _dict_to_action(action_dict)
+        return EnergyGridAction(), "empty"
+    if try_extract_action_from_llm_output(response_text) is None:
+        return _dict_to_action(extract_action_from_llm_output(response_text)), "unparseable"
+    return _dict_to_action(extract_action_from_llm_output(response_text)), "ok"
+
+
+def _parse_action(response_text: str) -> EnergyGridAction:
+    """Backward-compatible wrapper: action only, failures become the safe default."""
+    return _parse_action_checked(response_text)[0]
 
 def _dict_to_action(data: Dict[str, Any]) -> EnergyGridAction:
     """
@@ -431,6 +438,72 @@ def _is_major_event(obs: EnergyGridObservation, prev_obs: Optional[EnergyGridObs
     if obs.demand_mw > prev_obs.demand_mw * 1.15: return True
     return False
 
+@dataclass
+class AgentResult:
+    """One agent invocation: what the model said, what we parsed, what we applied."""
+    agent: str
+    action: EnergyGridAction          # action after the control layer (what is submitted)
+    ok: bool                          # False on call failure or parse failure
+    status: str                       # ok | empty | unparseable | call_failed
+    call: CallResult
+    proposed: Dict[str, Any] = field(default_factory=dict)         # parsed, before control layer
+    control_changes: Dict[str, List[Any]] = field(default_factory=dict)  # field -> [proposed, applied]
+
+
+def _new_stats() -> Dict[str, Any]:
+    return {
+        "calls": 0, "call_failures": 0, "parse_failures": 0, "control_overrides": 0,
+        "prompt_tokens": 0, "completion_tokens": 0, "latency_s": 0.0,
+    }
+
+
+def _account_call(stats: Dict[str, Any], call: CallResult) -> None:
+    stats["calls"] += 1
+    stats["latency_s"] = round(stats["latency_s"] + call.latency_s, 4)
+    stats["prompt_tokens"] += call.prompt_tokens or 0
+    stats["completion_tokens"] += call.completion_tokens or 0
+    if not call.ok:
+        stats["call_failures"] += 1
+
+
+def _invoke_agent(
+    client,
+    model: str,
+    agent: str,
+    system: str,
+    user_text: str,
+    obs: EnergyGridObservation,
+    stats: Dict[str, Any],
+    max_tokens: int = 256,
+    verbose: bool = True,
+) -> AgentResult:
+    """Call one agent, parse its output, apply the control layer, and account for it.
+
+    A failed call or unparseable output yields the safe default action but is
+    flagged (ok=False) and counted in `stats`; it is never reported as a success.
+    """
+    call = _call_llm_detailed(
+        client, model, system, [{"role": "user", "content": user_text}], max_tokens=max_tokens
+    )
+    _account_call(stats, call)
+    if not call.ok:
+        action, status = EnergyGridAction(), "call_failed"
+    else:
+        action, status = _parse_action_checked(call.content)
+        if status != "ok":
+            stats["parse_failures"] += 1
+    proposed = action.model_dump()
+    action = _apply_control_layer(action, obs)
+    applied = action.model_dump()
+    changes = {k: [proposed.get(k), applied[k]] for k in applied if proposed.get(k) != applied[k]}
+    if changes:
+        stats["control_overrides"] += 1
+    if verbose and status != "ok":
+        detail = f" ({call.error})" if call.error else ""
+        print(f"  [WARN] {agent} agent: {status}{detail}; using safe default action", flush=True)
+    return AgentResult(agent, action, status == "ok", status, call, proposed, changes)
+
+
 def run_task(
     env: EnergyGridEnvironment,
     client: OpenAI,
@@ -465,21 +538,25 @@ def run_task(
     # ------------------------------------------------------------------
     # Hard task - oneshot planner
     # ------------------------------------------------------------------
+    stats = _new_stats()
     plan = ""
     if task_id == "hard":
         if verbose:
             print("  [PLANNER] Generating strategic plan...")
-        planner_response = _call_llm_with_retry(
+        plan_call = _call_llm_detailed(
             client=client,
             model=PLANNING_MODEL,
             system="You are a strategic planner. Output a concise operational plan only.",
             messages=[{"role": "user", "content": _build_planner_prompt(obs)}],
             max_retries=2,
             max_tokens=PLANNING_MAX_TOKENS,
-            agent_type="planning",
-            verbose=verbose,
         )
-        plan = planner_response.strip()
+        _account_call(stats, plan_call)
+        if plan_call.ok and plan_call.content:
+            plan = plan_call.content.strip()
+        else:
+            stats["parse_failures"] += 1 if plan_call.ok else 0
+            print(f"  [WARN] planner: no plan produced ({plan_call.error or 'empty content'}); continuing without a plan", flush=True)
         if verbose:
             print(f"  [PLANNER] Plan generated ({len(plan)} chars).")
             print(f"  {plan}")
@@ -492,31 +569,35 @@ def run_task(
     prev_obs = None
     history = []
 
-    for step in range(min(total_steps, MAX_EVAL_STEPS)):
+    step_cap = min(total_steps, MAX_EVAL_STEPS) if MAX_EVAL_STEPS > 0 else total_steps
+    for step in range(step_cap):
         # Wall-clock timeout check before each LLM call
         if time.time() - episode_start > EPISODE_TIMEOUT:
             print(f"[WARN] Episode timeout reached at step {step}, stopping early", flush=True)
             break
 
         # --- ROUND 1: PROPOSALS ---
-        # 1. Gated Planning Agent
+        obs_text = observation_to_text(obs.model_dump())
+
+        # 1. Gated Planning Agent (keeps its previous action if the call fails)
         if _is_major_event(obs, prev_obs):
             if verbose: print(f"  [EVENT] Triggering Planning Agent at step {step}")
-            sys_p = _build_system_prompt(task_id, plan, step, agent_type="planning")
-            resp_p = _call_llm_with_retry(client, PLANNING_MODEL, sys_p, [{"role": "user", "content": observation_to_text(obs.model_dump())}], agent_type="planning", verbose=verbose)
-            last_planning_action = _parse_action(resp_p)
-            last_planning_action = _apply_control_layer(last_planning_action, obs)
-        
-        # 2. Dispatch and Market Proposals (Always called)
-        sys_d = _build_system_prompt(task_id, plan, step, agent_type="dispatch")
-        resp_d = _call_llm_with_retry(client, model, sys_d, [{"role": "user", "content": observation_to_text(obs.model_dump())}], agent_type="dispatch", verbose=verbose)
-        prop_d = _parse_action(resp_d)
-        prop_d = _apply_control_layer(prop_d, obs)
+            res_p = _invoke_agent(client, PLANNING_MODEL, "planning",
+                                  _build_system_prompt(task_id, plan, step, agent_type="planning"),
+                                  obs_text, obs, stats, verbose=verbose)
+            if res_p.ok:
+                last_planning_action = res_p.action
 
-        sys_m = _build_system_prompt(task_id, plan, step, agent_type="market")
-        resp_m = _call_llm_with_retry(client, model, sys_m, [{"role": "user", "content": observation_to_text(obs.model_dump())}], agent_type="market", verbose=verbose)
-        prop_m = _parse_action(resp_m)
-        prop_m = _apply_control_layer(prop_m, obs)
+        # 2. Dispatch and Market Proposals (Always called)
+        res_d = _invoke_agent(client, model, "dispatch",
+                              _build_system_prompt(task_id, plan, step, agent_type="dispatch"),
+                              obs_text, obs, stats, verbose=verbose)
+        prop_d = res_d.action
+
+        res_m = _invoke_agent(client, model, "market",
+                              _build_system_prompt(task_id, plan, step, agent_type="market"),
+                              obs_text, obs, stats, verbose=verbose)
+        prop_m = res_m.action
 
         rev_d = prop_d
         rev_m = prop_m
@@ -537,18 +618,19 @@ def run_task(
             env.step_market(prop_m)  # submit round 1; returned view is market-filtered, so not used
 
             # --- ROUND 2: REVISIONS (Dispatch & Market Only) ---
-            sys_rd = _build_system_prompt(task_id, plan, step, agent_type="dispatch")
+            # Prompts come from the canonical state plus round-1 negotiation history.
             obs_rd = env.get_agent_observation("dispatch")
-            resp_rd = _call_llm_with_retry(client, model, sys_rd, [{"role": "user", "content": observation_to_text(obs_rd.model_dump())}], agent_type="dispatch", verbose=verbose)
-            rev_d = _parse_action(resp_rd)
-            rev_d = _apply_control_layer(rev_d, obs_rd)
+            res_rd = _invoke_agent(client, model, "dispatch",
+                                   _build_system_prompt(task_id, plan, step, agent_type="dispatch"),
+                                   observation_to_text(obs_rd.model_dump()), obs_rd, stats, verbose=verbose)
+            rev_d = res_rd.action
             rev_d.proposal_type = "revision"
 
-            sys_rm = _build_system_prompt(task_id, plan, step, agent_type="market")
             obs_rm = env.get_agent_observation("market")
-            resp_rm = _call_llm_with_retry(client, model, sys_rm, [{"role": "user", "content": observation_to_text(obs_rm.model_dump())}], agent_type="market", verbose=verbose)
-            rev_m = _parse_action(resp_rm)
-            rev_m = _apply_control_layer(rev_m, obs_rm)
+            res_rm = _invoke_agent(client, model, "market",
+                                   _build_system_prompt(task_id, plan, step, agent_type="market"),
+                                   observation_to_text(obs_rm.model_dump()), obs_rm, stats, verbose=verbose)
+            rev_m = res_rm.action
             rev_m.proposal_type = "revision"
 
             # Round 2 submitted (advances simulator)
@@ -657,10 +739,23 @@ def run_task(
         print("  Components:", grade.get("component_scores", {}))
         print("  Total reward:", total_reward)
 
+    truncated = step_count < total_steps and not obs.done
+    valid_run = stats["call_failures"] == 0 and stats["parse_failures"] == 0
+    if not valid_run:
+        print(f"[WARN] task={task_id} call_failures={stats['call_failures']} "
+              f"parse_failures={stats['parse_failures']} - safe-default actions were substituted", flush=True)
+    if truncated:
+        print(f"[WARN] task={task_id} truncated at {step_count}/{total_steps} steps "
+              f"(MAX_EVAL_STEPS={MAX_EVAL_STEPS}); score is not a full-episode score", flush=True)
+
     return {
         "task_id": task_id,
         "task_name": task["name"],
         "score": score,
+        "truncated": truncated,
+        "eval_step_cap": step_cap,
+        "valid_run": valid_run,
+        "llm_stats": stats,
         "component_scores": grade.get("component_scores", {}),
         "weighted_components": grade.get("weighted_components", {}),
         "blackout_occurred": grade.get("blackout_occurred", False),
@@ -675,6 +770,62 @@ def run_task(
 # LLM call with retry (now uses tiered model routing)
 # ---------------------------------------------------------------------------
 
+@dataclass
+class CallResult:
+    """Outcome of one logical LLM call (including retries)."""
+    content: Optional[str] = None
+    error: Optional[str] = None
+    exception: Optional[BaseException] = None
+    attempts: int = 0
+    latency_s: float = 0.0            # wall time across all attempts
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    finish_reason: Optional[str] = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+
+def _call_llm_detailed(
+    client,
+    model,
+    system,
+    messages,
+    max_retries=3,
+    max_tokens=256,
+) -> CallResult:
+    """Call the model with bounded retries. Never raises; failure is in the result."""
+    result = CallResult()
+    start = time.time()
+    for attempt in range(max_retries):
+        result.attempts = attempt + 1
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "system", "content": system}, *messages],
+                temperature=0.2,
+                max_tokens=max_tokens,
+            )
+        except Exception as e:
+            result.error = f"{type(e).__name__}: {e}"[:300]
+            result.exception = e
+            if attempt < max_retries - 1:
+                time.sleep(1)
+            continue
+        choice = response.choices[0]
+        result.content = choice.message.content
+        result.finish_reason = getattr(choice, "finish_reason", None)
+        usage = getattr(response, "usage", None)
+        result.prompt_tokens = getattr(usage, "prompt_tokens", None)
+        result.completion_tokens = getattr(usage, "completion_tokens", None)
+        result.error = None
+        result.exception = None
+        break
+    result.latency_s = time.time() - start
+    return result
+
+
 def _call_llm_with_retry(
     client,
     model,
@@ -685,31 +836,13 @@ def _call_llm_with_retry(
     agent_type="dispatch",
     verbose=True,
 ):
-    """
-    Calls LLM with retries. Uses agent_type to select model.
-    """
+    """Backward-compatible wrapper: returns content, raises after retries are exhausted."""
+    result = _call_llm_detailed(client, model, system, messages, max_retries=max_retries, max_tokens=max_tokens)
+    if result.exception is not None:
+        raise result.exception
+    return result.content
 
-    target_model = model  #  FIX: do NOT override
 
-    for attempt in range(max_retries):
-        try:
-            response = client.chat.completions.create(
-                model=target_model,
-                messages=[
-                    {"role": "system", "content": system},
-                    *messages
-                ],
-                temperature=0.2,
-                max_tokens=max_tokens,
-            )
-
-            return response.choices[0].message.content
-
-        except Exception as e:
-            if attempt == max_retries - 1:
-                raise e
-            time.sleep(1)
-            
 # ---------------------------------------------------------------------------
 # Main runner (all tasks)
 # ---------------------------------------------------------------------------
