@@ -534,19 +534,21 @@ def run_task(
             # Round 1 proposals submitted
             env.step_planning(last_planning_action)
             env.step_dispatch(prop_d)
-            obs_mid = env.step_market(prop_m)
+            env.step_market(prop_m)  # submit round 1; returned view is market-filtered, so not used
 
             # --- ROUND 2: REVISIONS (Dispatch & Market Only) ---
             sys_rd = _build_system_prompt(task_id, plan, step, agent_type="dispatch")
-            resp_rd = _call_llm_with_retry(client, model, sys_rd, [{"role": "user", "content": observation_to_text(obs_mid.model_dump())}], agent_type="dispatch", verbose=verbose)
+            obs_rd = env.get_agent_observation("dispatch")
+            resp_rd = _call_llm_with_retry(client, model, sys_rd, [{"role": "user", "content": observation_to_text(obs_rd.model_dump())}], agent_type="dispatch", verbose=verbose)
             rev_d = _parse_action(resp_rd)
-            rev_d = _apply_control_layer(rev_d, obs_mid)
+            rev_d = _apply_control_layer(rev_d, obs_rd)
             rev_d.proposal_type = "revision"
 
             sys_rm = _build_system_prompt(task_id, plan, step, agent_type="market")
-            resp_rm = _call_llm_with_retry(client, model, sys_rm, [{"role": "user", "content": observation_to_text(obs_mid.__dict__)}], agent_type="market", verbose=verbose)
+            obs_rm = env.get_agent_observation("market")
+            resp_rm = _call_llm_with_retry(client, model, sys_rm, [{"role": "user", "content": observation_to_text(obs_rm.model_dump())}], agent_type="market", verbose=verbose)
             rev_m = _parse_action(resp_rm)
-            rev_m = _apply_control_layer(rev_m, obs_mid)
+            rev_m = _apply_control_layer(rev_m, obs_rm)
             rev_m.proposal_type = "revision"
 
             # Round 2 submitted (advances simulator)

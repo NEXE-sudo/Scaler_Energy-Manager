@@ -307,6 +307,30 @@ class EnergyGridEnvironment(Environment):
 # Observation Filtering (Asymmetric Information)
 # ---------------------------------------------------------------------------
 
+    def get_agent_observation(self, agent_type: str, filtered: bool = False):
+        """Observation for `agent_type` from the canonical current state.
+
+        Includes the current round's negotiation history. The returned object is
+        a copy, so callers cannot mutate the canonical observation.
+
+        filtered=False (default): the full canonical state, as agents see it in
+            round 1 of the baseline runner.
+        filtered=True: the role-filtered (asymmetric-information) view.
+
+        Use this instead of the observation returned by step_planning /
+        step_dispatch / step_market during round 1: those return a view
+        filtered for the *submitting* agent, back-filled with defaults, which is
+        wrong for any other agent.
+        """
+        if self._sim is None:
+            raise RuntimeError("Environment not reset; call reset() first.")
+        base = self._last_obs or self._build_observation(reward=0.0, done=False)
+        obs = base.model_copy(deep=True)
+        obs.negotiation_history = self._action_buffer.get_negotiation_history()
+        if filtered:
+            return self._filter_observation_for_agent(obs, agent_type)
+        return obs
+
     def _filter_observation_for_agent(self, obs, agent_type: str):
         """
         Returns a filtered observation for a specific agent,
