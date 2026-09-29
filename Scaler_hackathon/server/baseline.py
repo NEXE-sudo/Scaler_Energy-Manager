@@ -32,6 +32,7 @@ import os
 import re
 import signal
 import time
+import uuid
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -58,11 +59,13 @@ from openai import OpenAI
 try:
     from .energy_grid_environment import EnergyGridEnvironment
     from .tasks import get_task, TASK_ORDER
+    from .trace import TraceRecorder, git_sha, base_url_host
     from .llm_adapter import observation_to_text, extract_action_from_llm_output, try_extract_action_from_llm_output
     from ..models import EnergyGridAction, EnergyGridObservation
 except (ImportError, ValueError):
     from server.energy_grid_environment import EnergyGridEnvironment
     from server.tasks import get_task, TASK_ORDER
+    from server.trace import TraceRecorder, git_sha, base_url_host
     from server.llm_adapter import observation_to_text, extract_action_from_llm_output, try_extract_action_from_llm_output
     from models import EnergyGridAction, EnergyGridObservation
 
@@ -448,6 +451,7 @@ class AgentResult:
     call: CallResult
     proposed: Dict[str, Any] = field(default_factory=dict)         # parsed, before control layer
     control_changes: Dict[str, List[Any]] = field(default_factory=dict)  # field -> [proposed, applied]
+    call_id: Optional[str] = None
 
 
 def _new_stats() -> Dict[str, Any]:
@@ -466,6 +470,35 @@ def _account_call(stats: Dict[str, Any], call: CallResult) -> None:
         stats["call_failures"] += 1
 
 
+_OBS_SUMMARY_FIELDS = (
+    "demand_mw", "coal_mw", "solar_mw", "wind_mw", "hydro_mw", "nuclear_mw", "frequency_hz",
+    "unmet_demand_mw", "blackout_risk", "spinning_reserve_mw", "spinning_reserve_required_mw",
+    "battery_mwh", "battery_capacity_mwh", "spot_price", "coal_online",
+)
+
+
+def _obs_summary(obs: Any) -> Dict[str, Any]:
+    return {k: getattr(obs, k, None) for k in _OBS_SUMMARY_FIELDS}
+
+
+def _record_call(trace: Optional[TraceRecorder], call_id: Optional[str], step: Optional[int],
+                 round_name: str, agent: str, model: str, system: str, user_text: str,
+                 call: CallResult, status: str, proposed: Dict[str, Any], applied: Dict[str, Any],
+                 changes: Dict[str, List[Any]], state: Optional[Dict[str, Any]],
+                 inputs_from: Optional[List[str]] = None, plan_call_id: Optional[str] = None) -> None:
+    if trace is None:
+        return
+    trace.record(
+        "agent_call", call_id=call_id, step=step, round=round_name, agent=agent, model=model,
+        system_prompt=system, user_prompt=user_text, raw_response=call.content,
+        finish_reason=call.finish_reason, attempts=call.attempts, latency_s=round(call.latency_s, 4),
+        prompt_tokens=call.prompt_tokens, completion_tokens=call.completion_tokens,
+        call_error=call.error, parse_status=status, ok=(status == "ok"),
+        proposed_action=proposed, applied_action=applied, control_changes=changes,
+        state=state, inputs_from=inputs_from or [], plan_call_id=plan_call_id,
+    )
+
+
 def _invoke_agent(
     client,
     model: str,
@@ -476,6 +509,12 @@ def _invoke_agent(
     stats: Dict[str, Any],
     max_tokens: int = 256,
     verbose: bool = True,
+    trace: Optional[TraceRecorder] = None,
+    run_id: Optional[str] = None,
+    step: Optional[int] = None,
+    round_name: str = "proposal",
+    inputs_from: Optional[List[str]] = None,
+    plan_call_id: Optional[str] = None,
 ) -> AgentResult:
     """Call one agent, parse its output, apply the control layer, and account for it.
 
@@ -501,7 +540,10 @@ def _invoke_agent(
     if verbose and status != "ok":
         detail = f" ({call.error})" if call.error else ""
         print(f"  [WARN] {agent} agent: {status}{detail}; using safe default action", flush=True)
-    return AgentResult(agent, action, status == "ok", status, call, proposed, changes)
+    call_id = f"{run_id}:{step}:{round_name}:{agent}" if run_id is not None else None
+    _record_call(trace, call_id, step, round_name, agent, model, system, user_text, call, status,
+                 proposed, applied, changes, _obs_summary(obs), inputs_from, plan_call_id)
+    return AgentResult(agent, action, status == "ok", status, call, proposed, changes, call_id)
 
 
 def run_task(
@@ -510,6 +552,7 @@ def run_task(
     model: str,
     task_id: str,
     verbose: bool = True,
+    trace: Optional[TraceRecorder] = None,
 ) -> Dict[str, Any]:
     """
     Run one complete task episode with the LLM agent.
@@ -531,6 +574,18 @@ def run_task(
     # Reset environment
     obs = env.reset(task_id)
 
+    run_id = f"{task_id}-{uuid.uuid4().hex[:8]}" if trace is not None else None
+    if trace is not None:
+        models = {"planning": PLANNING_MODEL, "dispatch": model, "market": model}
+        trace.record(
+            "run_start", run_id=run_id, task_id=task_id, protocol="p1_free_text",
+            models=models, heterogeneous=len(set(models.values())) > 1,
+            provider_host=base_url_host(client), seed=task.get("seed"),
+            total_steps=task["total_steps"], max_eval_steps=MAX_EVAL_STEPS,
+            temperature=0.2, max_tokens={"planning": PLANNING_MAX_TOKENS, "default": 256},
+            git_sha=git_sha(),
+        )
+
     # Wall-clock timeout (18 min hard cap, leaves 2 min margin before 20-min budget)
     episode_start = time.time()
     EPISODE_TIMEOUT = 18 * 60
@@ -540,6 +595,8 @@ def run_task(
     # ------------------------------------------------------------------
     stats = _new_stats()
     plan = ""
+    plan_call_id: Optional[str] = None
+    last_planning_call_id: Optional[str] = None
     if task_id == "hard":
         if verbose:
             print("  [PLANNER] Generating strategic plan...")
@@ -552,6 +609,11 @@ def run_task(
             max_tokens=PLANNING_MAX_TOKENS,
         )
         _account_call(stats, plan_call)
+        plan_call_id = f"{run_id}:plan" if run_id is not None else None
+        _record_call(trace, plan_call_id, None, "plan", "planning", PLANNING_MODEL,
+                     "You are a strategic planner. Output a concise operational plan only.",
+                     _build_planner_prompt(obs), plan_call, "ok" if plan_call.ok and plan_call.content else ("empty" if plan_call.ok else "call_failed"),
+                     {}, {}, {}, _obs_summary(obs))
         if plan_call.ok and plan_call.content:
             plan = plan_call.content.strip()
         else:
@@ -578,25 +640,33 @@ def run_task(
 
         # --- ROUND 1: PROPOSALS ---
         obs_text = observation_to_text(obs.model_dump())
+        plan_id_now = plan_call_id if (task_id == "hard" and plan and step < 40) else None
 
         # 1. Gated Planning Agent (keeps its previous action if the call fails)
         if _is_major_event(obs, prev_obs):
             if verbose: print(f"  [EVENT] Triggering Planning Agent at step {step}")
             res_p = _invoke_agent(client, PLANNING_MODEL, "planning",
                                   _build_system_prompt(task_id, plan, step, agent_type="planning"),
-                                  obs_text, obs, stats, verbose=verbose)
+                                  obs_text, obs, stats, verbose=verbose,
+                                  trace=trace, run_id=run_id, step=step, round_name="proposal",
+                                  plan_call_id=plan_id_now)
             if res_p.ok:
                 last_planning_action = res_p.action
+                last_planning_call_id = res_p.call_id
 
         # 2. Dispatch and Market Proposals (Always called)
         res_d = _invoke_agent(client, model, "dispatch",
                               _build_system_prompt(task_id, plan, step, agent_type="dispatch"),
-                              obs_text, obs, stats, verbose=verbose)
+                              obs_text, obs, stats, verbose=verbose,
+                              trace=trace, run_id=run_id, step=step, round_name="proposal",
+                              plan_call_id=plan_id_now)
         prop_d = res_d.action
 
         res_m = _invoke_agent(client, model, "market",
                               _build_system_prompt(task_id, plan, step, agent_type="market"),
-                              obs_text, obs, stats, verbose=verbose)
+                              obs_text, obs, stats, verbose=verbose,
+                              trace=trace, run_id=run_id, step=step, round_name="proposal",
+                              plan_call_id=plan_id_now)
         prop_m = res_m.action
 
         rev_d = prop_d
@@ -618,18 +688,25 @@ def run_task(
             env.step_market(prop_m)  # submit round 1; returned view is market-filtered, so not used
 
             # --- ROUND 2: REVISIONS (Dispatch & Market Only) ---
+            # Handoff provenance: the negotiation history each reviser sees is built from these
+            # round-1 calls (the planning entry may date from an earlier step if not re-invoked).
+            r1_ids = [i for i in (last_planning_call_id, res_d.call_id, res_m.call_id) if i]
             # Prompts come from the canonical state plus round-1 negotiation history.
             obs_rd = env.get_agent_observation("dispatch")
             res_rd = _invoke_agent(client, model, "dispatch",
                                    _build_system_prompt(task_id, plan, step, agent_type="dispatch"),
-                                   observation_to_text(obs_rd.model_dump()), obs_rd, stats, verbose=verbose)
+                                   observation_to_text(obs_rd.model_dump()), obs_rd, stats, verbose=verbose,
+                                   trace=trace, run_id=run_id, step=step, round_name="revision",
+                                   inputs_from=r1_ids, plan_call_id=plan_id_now)
             rev_d = res_rd.action
             rev_d.proposal_type = "revision"
 
             obs_rm = env.get_agent_observation("market")
             res_rm = _invoke_agent(client, model, "market",
                                    _build_system_prompt(task_id, plan, step, agent_type="market"),
-                                   observation_to_text(obs_rm.model_dump()), obs_rm, stats, verbose=verbose)
+                                   observation_to_text(obs_rm.model_dump()), obs_rm, stats, verbose=verbose,
+                                   trace=trace, run_id=run_id, step=step, round_name="revision",
+                                   inputs_from=r1_ids, plan_call_id=plan_id_now)
             rev_m = res_rm.action
             rev_m.proposal_type = "revision"
 
@@ -644,6 +721,14 @@ def run_task(
         final_m = rev_m if task_id != "easy" else prop_m
 
         reward = obs.reward or 0.0
+
+        if trace is not None:
+            trace.record(
+                "env_step", step=step, reward=float(reward), done=bool(obs.done),
+                submitted={"planning": last_planning_action.model_dump(),
+                           "dispatch": final_d.model_dump(), "market": final_m.model_dump()},
+                observation=_obs_summary(obs),
+            )
 
         history.append({
             "step": step_count + 1,
@@ -741,6 +826,9 @@ def run_task(
 
     truncated = step_count < total_steps and not obs.done
     valid_run = stats["call_failures"] == 0 and stats["parse_failures"] == 0
+    if trace is not None:
+        trace.record("run_end", run_id=run_id, score=score, steps=step_count, truncated=truncated,
+                     valid_run=valid_run, blackout=bool(grade.get("blackout_occurred", False)), stats=stats)
     if not valid_run:
         print(f"[WARN] task={task_id} call_failures={stats['call_failures']} "
               f"parse_failures={stats['parse_failures']} - safe-default actions were substituted", flush=True)
@@ -756,6 +844,7 @@ def run_task(
         "eval_step_cap": step_cap,
         "valid_run": valid_run,
         "llm_stats": stats,
+        "trace_path": str(trace.path) if trace is not None and trace.path is not None else None,
         "component_scores": grade.get("component_scores", {}),
         "weighted_components": grade.get("weighted_components", {}),
         "blackout_occurred": grade.get("blackout_occurred", False),
@@ -850,6 +939,7 @@ def _call_llm_with_retry(
 def run_baseline_agent(
     task_ids: Optional[List[str]] = None,
     verbose: bool = True,
+    trace_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Run the baseline LLM agent on the specified tasks.
@@ -857,6 +947,7 @@ def run_baseline_agent(
     """
     if task_ids is None:
         task_ids = list(TASK_ORDER)
+    trace_dir = trace_dir or os.getenv("SCALER_TRACE_DIR") or None
 
     if verbose:
         print("\n" + "=" * 60)
@@ -883,12 +974,16 @@ def run_baseline_agent(
             print(f"  [SKIP] Unknown task: {task_id}")
             continue
 
+        trace = None
+        if trace_dir:
+            trace = TraceRecorder(Path(trace_dir) / f"{task_id}-{time.strftime('%Y%m%d_%H%M%S')}.jsonl")
         result = run_task(
             env=env,
             client=client,
             model=model,
             task_id=task_id,
             verbose=verbose,
+            trace=trace,
         )
         results[task_id] = result
         summary_scores[task_id] = result["score"]
