@@ -38,36 +38,54 @@ except ImportError:
     pass  # dotenv optional; env vars can be set directly
 
 from server.baseline import run_baseline_agent
+from server.model_config import ConfigError, describe_team, load_team_config, team_env_configured
 
 
 def main() -> int:
     """Run baseline agent on all tasks with structured logging."""
     
-    # Load environment variables with defaults for API_BASE_URL and MODEL_NAME only
-    api_base_url = os.getenv("API_BASE_URL", "https://api.groq.com/openai/v1")
-    model_name = os.getenv("MODEL_NAME", "llama-3.3-70b-versatile")
-    hf_token = os.getenv("HF_TOKEN") or os.getenv("API_KEY") or os.getenv("OPENAI_API_KEY")
+    if team_env_configured():
+        # Per-role model configuration (SCALER_* variables or SCALER_MODELS_FILE).
+        # Each role's key comes from the environment variable named in its config.
+        try:
+            team_cfg = load_team_config()
+        except ConfigError as e:
+            print(f"ERROR: {e}", flush=True)
+            return 1
+        missing = sorted({c.api_key_env for c in team_cfg.roles.values() if not os.getenv(c.api_key_env)})
+        if missing:
+            print(f"ERROR: Missing API key environment variable(s): {', '.join(missing)}", flush=True)
+            return 1
+        model_name = team_cfg.roles["dispatch"].model
+        for line in describe_team(team_cfg):
+            print(f"[DEBUG] {line}", flush=True)
+    else:
+        # Load environment variables with defaults for API_BASE_URL and MODEL_NAME only
+        api_base_url = os.getenv("API_BASE_URL", "https://api.groq.com/openai/v1")
+        model_name = os.getenv("MODEL_NAME", "llama-3.3-70b-versatile")
+        hf_token = os.getenv("HF_TOKEN") or os.getenv("API_KEY") or os.getenv("OPENAI_API_KEY")
     
-    # HF_TOKEN is required (no default)
-    if not hf_token:
-        print("ERROR: Missing required HF_TOKEN environment variable", flush=True)
-        print("Optional (have defaults):", flush=True)
-        print("  API_BASE_URL   defaults to: https://api.groq.com/openai/v1", flush=True)
-        print("  MODEL_NAME     defaults to: llama-3.3-70b-versatile", flush=True)
-        print("Required:", flush=True)
-        print("  HF_TOKEN       Authentication key for API (required)", flush=True)
-        return 1
+        # HF_TOKEN is required (no default)
+        if not hf_token:
+            print("ERROR: Missing required HF_TOKEN environment variable", flush=True)
+            print("Optional (have defaults):", flush=True)
+            print("  API_BASE_URL   defaults to: https://api.groq.com/openai/v1", flush=True)
+            print("  MODEL_NAME     defaults to: llama-3.3-70b-versatile", flush=True)
+            print("Required:", flush=True)
+            print("  HF_TOKEN       Authentication key for API (required)", flush=True)
+            return 1
     
-    # Debug: Show what was read
-    print(f"[DEBUG] API_BASE_URL={api_base_url}", flush=True)
-    print(f"[DEBUG] MODEL_NAME={model_name}", flush=True)
-    print(f"[DEBUG] HF_TOKEN set: {bool(hf_token)}", flush=True)
+        # Debug: Show what was read
+        print(f"[DEBUG] API_BASE_URL={api_base_url}", flush=True)
+        print(f"[DEBUG] MODEL_NAME={model_name}", flush=True)
+        print(f"[DEBUG] HF_TOKEN set: {bool(hf_token)}", flush=True)
     
-    # Bridge environment variables (API key handling will be in baseline.py)
-    os.environ["API_BASE_URL"] = api_base_url
-    os.environ["MODEL_NAME"] = model_name
-    os.environ["HF_TOKEN"] = hf_token
+        # Bridge environment variables (API key handling will be in baseline.py)
+        os.environ["API_BASE_URL"] = api_base_url
+        os.environ["MODEL_NAME"] = model_name
+        os.environ["HF_TOKEN"] = hf_token
     
+
     # Run baseline agent on all three tasks
     # (Will emit structured logs directly from run_baseline_agent)
     try:
