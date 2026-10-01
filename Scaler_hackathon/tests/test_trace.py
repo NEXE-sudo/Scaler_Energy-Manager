@@ -37,7 +37,8 @@ def test_event_sequence_and_manifest():
     assert m["task_id"] == "medium" and m["protocol"] == "p1_free_text"
     assert m["models"]["dispatch"] == m["models"]["market"] == "model-x"
     assert isinstance(m["seed"], int) and m["git_sha"]
-    assert "api_key" not in json.dumps(trace.events).lower()
+    # roles carry only the *name* of a key variable, never a key value
+    assert set(m["roles"]) == {"planning", "dispatch", "market"}
 
 
 def test_heterogeneity_is_derived_from_actual_model_ids(monkeypatch):

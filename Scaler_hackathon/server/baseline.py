@@ -60,13 +60,15 @@ try:
     from .energy_grid_environment import EnergyGridEnvironment
     from .tasks import get_task, TASK_ORDER
     from .trace import TraceRecorder, git_sha, base_url_host
-    from .llm_adapter import observation_to_text, extract_action_from_llm_output, try_extract_action_from_llm_output
+    from .llm_adapter import observation_to_text, extract_action_from_llm_output, try_extract_action_from_llm_output, split_reasoning
+    from .model_config import ROLES, ConfigError, RoleModelConfig, RoleRuntime, build_team, describe_team, load_team_config
     from ..models import EnergyGridAction, EnergyGridObservation
 except (ImportError, ValueError):
     from server.energy_grid_environment import EnergyGridEnvironment
     from server.tasks import get_task, TASK_ORDER
     from server.trace import TraceRecorder, git_sha, base_url_host
-    from server.llm_adapter import observation_to_text, extract_action_from_llm_output, try_extract_action_from_llm_output
+    from server.llm_adapter import observation_to_text, extract_action_from_llm_output, try_extract_action_from_llm_output, split_reasoning
+    from server.model_config import ROLES, ConfigError, RoleModelConfig, RoleRuntime, build_team, describe_team, load_team_config
     from models import EnergyGridAction, EnergyGridObservation
 
 # ---------------------------------------------------------------------------
@@ -452,6 +454,7 @@ class AgentResult:
     proposed: Dict[str, Any] = field(default_factory=dict)         # parsed, before control layer
     control_changes: Dict[str, List[Any]] = field(default_factory=dict)  # field -> [proposed, applied]
     call_id: Optional[str] = None
+    reasoning: Optional[str] = None
 
 
 def _new_stats() -> Dict[str, Any]:
@@ -470,6 +473,25 @@ def _account_call(stats: Dict[str, Any], call: CallResult) -> None:
         stats["call_failures"] += 1
 
 
+def _legacy_team(client: Any, model: str) -> Dict[str, "RoleRuntime"]:
+    """Roles for the original single-client setup: one client, MODEL_NAME for dispatch and
+    market, PLANNING_MODEL for planning, fixed 256 / 600 token budgets, temperature 0.2."""
+    base_url = str(getattr(client, "base_url", "") or "")
+    team = {}
+    for role in ROLES:
+        team[role] = RoleRuntime(client, RoleModelConfig(
+            role=role, model=PLANNING_MODEL if role == "planning" else model,
+            base_url=base_url, api_key_env="(client supplied by caller)", timeout_s=None,
+            plan_max_tokens=PLANNING_MAX_TOKENS if role == "planning" else None,
+        ))
+    return team
+
+
+def _call_kwargs(rt: "RoleRuntime") -> Dict[str, Any]:
+    c = rt.cfg
+    return dict(max_tokens=c.max_tokens, temperature=c.temperature, extra_body=c.extra_body, timeout=c.timeout_s)
+
+
 _OBS_SUMMARY_FIELDS = (
     "demand_mw", "coal_mw", "solar_mw", "wind_mw", "hydro_mw", "nuclear_mw", "frequency_hz",
     "unmet_demand_mw", "blackout_risk", "spinning_reserve_mw", "spinning_reserve_required_mw",
@@ -485,7 +507,8 @@ def _record_call(trace: Optional[TraceRecorder], call_id: Optional[str], step: O
                  round_name: str, agent: str, model: str, system: str, user_text: str,
                  call: CallResult, status: str, proposed: Dict[str, Any], applied: Dict[str, Any],
                  changes: Dict[str, List[Any]], state: Optional[Dict[str, Any]],
-                 inputs_from: Optional[List[str]] = None, plan_call_id: Optional[str] = None) -> None:
+                 inputs_from: Optional[List[str]] = None, plan_call_id: Optional[str] = None,
+                 reasoning: Optional[str] = None) -> None:
     if trace is None:
         return
     trace.record(
@@ -496,7 +519,24 @@ def _record_call(trace: Optional[TraceRecorder], call_id: Optional[str], step: O
         call_error=call.error, parse_status=status, ok=(status == "ok"),
         proposed_action=proposed, applied_action=applied, control_changes=changes,
         state=state, inputs_from=inputs_from or [], plan_call_id=plan_call_id,
+        reasoning=(reasoning[:8000] if reasoning else None),
     )
+
+
+def _interpret_call(call: CallResult) -> Tuple[EnergyGridAction, str, Optional[str]]:
+    """Turn a successful call into (action, status, reasoning).
+
+    status: ok | empty | unparseable | reasoning_truncated | reasoning_only.
+    The reasoning_* statuses cover reasoning models whose answer is missing because
+    the token budget was spent on thinking (finish_reason == "length" or an unclosed
+    <think>), or whose text arrived only in reasoning_content.
+    """
+    answer, inline_reasoning, unclosed = split_reasoning(call.content)
+    reasoning = call.reasoning or inline_reasoning
+    action, status = _parse_action_checked(answer)
+    if status == "empty" and (reasoning or unclosed):
+        status = "reasoning_truncated" if (call.finish_reason == "length" or unclosed) else "reasoning_only"
+    return action, status, reasoning
 
 
 def _invoke_agent(
@@ -515,6 +555,9 @@ def _invoke_agent(
     round_name: str = "proposal",
     inputs_from: Optional[List[str]] = None,
     plan_call_id: Optional[str] = None,
+    temperature: float = 0.2,
+    extra_body: Optional[Dict[str, Any]] = None,
+    timeout: Optional[float] = None,
 ) -> AgentResult:
     """Call one agent, parse its output, apply the control layer, and account for it.
 
@@ -522,13 +565,15 @@ def _invoke_agent(
     flagged (ok=False) and counted in `stats`; it is never reported as a success.
     """
     call = _call_llm_detailed(
-        client, model, system, [{"role": "user", "content": user_text}], max_tokens=max_tokens
+        client, model, system, [{"role": "user", "content": user_text}], max_tokens=max_tokens,
+        temperature=temperature, extra_body=extra_body, timeout=timeout,
     )
     _account_call(stats, call)
+    reasoning = call.reasoning
     if not call.ok:
         action, status = EnergyGridAction(), "call_failed"
     else:
-        action, status = _parse_action_checked(call.content)
+        action, status, reasoning = _interpret_call(call)
         if status != "ok":
             stats["parse_failures"] += 1
     proposed = action.model_dump()
@@ -542,8 +587,8 @@ def _invoke_agent(
         print(f"  [WARN] {agent} agent: {status}{detail}; using safe default action", flush=True)
     call_id = f"{run_id}:{step}:{round_name}:{agent}" if run_id is not None else None
     _record_call(trace, call_id, step, round_name, agent, model, system, user_text, call, status,
-                 proposed, applied, changes, _obs_summary(obs), inputs_from, plan_call_id)
-    return AgentResult(agent, action, status == "ok", status, call, proposed, changes, call_id)
+                 proposed, applied, changes, _obs_summary(obs), inputs_from, plan_call_id, reasoning)
+    return AgentResult(agent, action, status == "ok", status, call, proposed, changes, call_id, reasoning)
 
 
 def run_task(
@@ -553,14 +598,22 @@ def run_task(
     task_id: str,
     verbose: bool = True,
     trace: Optional[TraceRecorder] = None,
+    team: Optional[Dict[str, "RoleRuntime"]] = None,
 ) -> Dict[str, Any]:
     """
     Run one complete task episode with the LLM agent.
+
+    `team` maps each role (planning/dispatch/market) to its own client and model
+    settings (see server/model_config.py). If omitted, the legacy single
+    `client` + `model` setup is used.
     Hard task: planner at step 0, then executor with 4turn rolling history.
     Easy / Medium: singleprompt executor with 4turn history.
     """
     task = get_task(task_id)
     total_steps = task["total_steps"]
+    team = team or _legacy_team(client, model)
+    rp, rd, rm = team["planning"], team["dispatch"], team["market"]
+    model = rd.cfg.model  # label used in [START] logs
 
     # Emit structured log: START
     print(f"[START] task={task_id} env=energy-grid-openenv model={model}", flush=True)
@@ -576,13 +629,13 @@ def run_task(
 
     run_id = f"{task_id}-{uuid.uuid4().hex[:8]}" if trace is not None else None
     if trace is not None:
-        models = {"planning": PLANNING_MODEL, "dispatch": model, "market": model}
+        models = {r: team[r].cfg.model for r in ROLES}
         trace.record(
             "run_start", run_id=run_id, task_id=task_id, protocol="p1_free_text",
             models=models, heterogeneous=len(set(models.values())) > 1,
-            provider_host=base_url_host(client), seed=task.get("seed"),
-            total_steps=task["total_steps"], max_eval_steps=MAX_EVAL_STEPS,
-            temperature=0.2, max_tokens={"planning": PLANNING_MAX_TOKENS, "default": 256},
+            roles={r: {**team[r].cfg.to_manifest(), "provider_host": base_url_host(team[r].client)
+                       or team[r].cfg.to_manifest()["provider_host"]} for r in ROLES},
+            seed=task.get("seed"), total_steps=task["total_steps"], max_eval_steps=MAX_EVAL_STEPS,
             git_sha=git_sha(),
         )
 
@@ -600,25 +653,33 @@ def run_task(
     if task_id == "hard":
         if verbose:
             print("  [PLANNER] Generating strategic plan...")
+        plan_system = "You are a strategic planner. Output a concise operational plan only."
+        plan_user = _build_planner_prompt(obs)
+        pk = _call_kwargs(rp)
+        pk["max_tokens"] = rp.cfg.plan_max_tokens or PLANNING_MAX_TOKENS
         plan_call = _call_llm_detailed(
-            client=client,
-            model=PLANNING_MODEL,
-            system="You are a strategic planner. Output a concise operational plan only.",
-            messages=[{"role": "user", "content": _build_planner_prompt(obs)}],
-            max_retries=2,
-            max_tokens=PLANNING_MAX_TOKENS,
+            client=rp.client, model=rp.cfg.model, system=plan_system,
+            messages=[{"role": "user", "content": plan_user}], max_retries=2, **pk,
         )
         _account_call(stats, plan_call)
+        plan_answer, plan_inline_reasoning, plan_unclosed = split_reasoning(plan_call.content)
+        plan_reasoning = plan_call.reasoning or plan_inline_reasoning
+        if not plan_call.ok:
+            plan_status = "call_failed"
+        elif plan_answer.strip():
+            plan_status = "ok"
+        elif plan_reasoning or plan_unclosed:
+            plan_status = "reasoning_truncated" if (plan_call.finish_reason == "length" or plan_unclosed) else "reasoning_only"
+        else:
+            plan_status = "empty"
         plan_call_id = f"{run_id}:plan" if run_id is not None else None
-        _record_call(trace, plan_call_id, None, "plan", "planning", PLANNING_MODEL,
-                     "You are a strategic planner. Output a concise operational plan only.",
-                     _build_planner_prompt(obs), plan_call, "ok" if plan_call.ok and plan_call.content else ("empty" if plan_call.ok else "call_failed"),
-                     {}, {}, {}, _obs_summary(obs))
-        if plan_call.ok and plan_call.content:
-            plan = plan_call.content.strip()
+        _record_call(trace, plan_call_id, None, "plan", "planning", rp.cfg.model, plan_system, plan_user,
+                     plan_call, plan_status, {}, {}, {}, _obs_summary(obs), reasoning=plan_reasoning)
+        if plan_status == "ok":
+            plan = plan_answer.strip()
         else:
             stats["parse_failures"] += 1 if plan_call.ok else 0
-            print(f"  [WARN] planner: no plan produced ({plan_call.error or 'empty content'}); continuing without a plan", flush=True)
+            print(f"  [WARN] planner: no plan produced ({plan_call.error or plan_status}); continuing without a plan", flush=True)
         if verbose:
             print(f"  [PLANNER] Plan generated ({len(plan)} chars).")
             print(f"  {plan}")
@@ -645,9 +706,9 @@ def run_task(
         # 1. Gated Planning Agent (keeps its previous action if the call fails)
         if _is_major_event(obs, prev_obs):
             if verbose: print(f"  [EVENT] Triggering Planning Agent at step {step}")
-            res_p = _invoke_agent(client, PLANNING_MODEL, "planning",
+            res_p = _invoke_agent(rp.client, rp.cfg.model, "planning",
                                   _build_system_prompt(task_id, plan, step, agent_type="planning"),
-                                  obs_text, obs, stats, verbose=verbose,
+                                  obs_text, obs, stats, verbose=verbose, **_call_kwargs(rp),
                                   trace=trace, run_id=run_id, step=step, round_name="proposal",
                                   plan_call_id=plan_id_now)
             if res_p.ok:
@@ -655,16 +716,16 @@ def run_task(
                 last_planning_call_id = res_p.call_id
 
         # 2. Dispatch and Market Proposals (Always called)
-        res_d = _invoke_agent(client, model, "dispatch",
+        res_d = _invoke_agent(rd.client, rd.cfg.model, "dispatch",
                               _build_system_prompt(task_id, plan, step, agent_type="dispatch"),
-                              obs_text, obs, stats, verbose=verbose,
+                              obs_text, obs, stats, verbose=verbose, **_call_kwargs(rd),
                               trace=trace, run_id=run_id, step=step, round_name="proposal",
                               plan_call_id=plan_id_now)
         prop_d = res_d.action
 
-        res_m = _invoke_agent(client, model, "market",
+        res_m = _invoke_agent(rm.client, rm.cfg.model, "market",
                               _build_system_prompt(task_id, plan, step, agent_type="market"),
-                              obs_text, obs, stats, verbose=verbose,
+                              obs_text, obs, stats, verbose=verbose, **_call_kwargs(rm),
                               trace=trace, run_id=run_id, step=step, round_name="proposal",
                               plan_call_id=plan_id_now)
         prop_m = res_m.action
@@ -693,18 +754,18 @@ def run_task(
             r1_ids = [i for i in (last_planning_call_id, res_d.call_id, res_m.call_id) if i]
             # Prompts come from the canonical state plus round-1 negotiation history.
             obs_rd = env.get_agent_observation("dispatch")
-            res_rd = _invoke_agent(client, model, "dispatch",
+            res_rd = _invoke_agent(rd.client, rd.cfg.model, "dispatch",
                                    _build_system_prompt(task_id, plan, step, agent_type="dispatch"),
-                                   observation_to_text(obs_rd.model_dump()), obs_rd, stats, verbose=verbose,
+                                   observation_to_text(obs_rd.model_dump()), obs_rd, stats, verbose=verbose, **_call_kwargs(rd),
                                    trace=trace, run_id=run_id, step=step, round_name="revision",
                                    inputs_from=r1_ids, plan_call_id=plan_id_now)
             rev_d = res_rd.action
             rev_d.proposal_type = "revision"
 
             obs_rm = env.get_agent_observation("market")
-            res_rm = _invoke_agent(client, model, "market",
+            res_rm = _invoke_agent(rm.client, rm.cfg.model, "market",
                                    _build_system_prompt(task_id, plan, step, agent_type="market"),
-                                   observation_to_text(obs_rm.model_dump()), obs_rm, stats, verbose=verbose,
+                                   observation_to_text(obs_rm.model_dump()), obs_rm, stats, verbose=verbose, **_call_kwargs(rm),
                                    trace=trace, run_id=run_id, step=step, round_name="revision",
                                    inputs_from=r1_ids, plan_call_id=plan_id_now)
             rev_m = res_rm.action
@@ -870,6 +931,7 @@ class CallResult:
     prompt_tokens: Optional[int] = None
     completion_tokens: Optional[int] = None
     finish_reason: Optional[str] = None
+    reasoning: Optional[str] = None   # provider-separated reasoning (reasoning_content), if any
 
     @property
     def ok(self) -> bool:
@@ -883,6 +945,9 @@ def _call_llm_detailed(
     messages,
     max_retries=3,
     max_tokens=256,
+    temperature=0.2,
+    extra_body=None,
+    timeout=None,
 ) -> CallResult:
     """Call the model with bounded retries. Never raises; failure is in the result."""
     result = CallResult()
@@ -890,12 +955,17 @@ def _call_llm_detailed(
     for attempt in range(max_retries):
         result.attempts = attempt + 1
         try:
-            response = client.chat.completions.create(
+            request: Dict[str, Any] = dict(
                 model=model,
                 messages=[{"role": "system", "content": system}, *messages],
-                temperature=0.2,
+                temperature=temperature,
                 max_tokens=max_tokens,
             )
+            if extra_body:
+                request["extra_body"] = extra_body
+            if timeout:
+                request["timeout"] = timeout
+            response = client.chat.completions.create(**request)
         except Exception as e:
             result.error = f"{type(e).__name__}: {e}"[:300]
             result.exception = e
@@ -904,6 +974,10 @@ def _call_llm_detailed(
             continue
         choice = response.choices[0]
         result.content = choice.message.content
+        message = choice.message
+        extra = getattr(message, "model_extra", None) or {}
+        result.reasoning = (getattr(message, "reasoning_content", None) or getattr(message, "reasoning", None)
+                            or extra.get("reasoning_content") or extra.get("reasoning") or None)
         result.finish_reason = getattr(choice, "finish_reason", None)
         usage = getattr(response, "usage", None)
         result.prompt_tokens = getattr(usage, "prompt_tokens", None)
@@ -955,13 +1029,16 @@ def run_baseline_agent(
         print("=" * 60)
 
     try:
-        client, model = _build_client()
-    except (EnvironmentError, RuntimeError) as e:
+        team_cfg = load_team_config()
+        team = build_team(team_cfg)
+    except (EnvironmentError, RuntimeError) as e:  # ConfigError is an EnvironmentError
         print(f"  [ERROR] Client initialization failed: {e}")
         raise  # Re-raise for caller to handle
-    
+    model = team["dispatch"].cfg.model
+
     if verbose:
-        print(f"  Model: {model}")
+        for line in describe_team(team_cfg):
+            print(f"  {line}")
         print(f"  Tasks: {task_ids}")
 
     env = EnergyGridEnvironment(normalize=False)
@@ -979,11 +1056,12 @@ def run_baseline_agent(
             trace = TraceRecorder(Path(trace_dir) / f"{task_id}-{time.strftime('%Y%m%d_%H%M%S')}.jsonl")
         result = run_task(
             env=env,
-            client=client,
+            client=team["dispatch"].client,
             model=model,
             task_id=task_id,
             verbose=verbose,
             trace=trace,
+            team=team,
         )
         results[task_id] = result
         summary_scores[task_id] = result["score"]
@@ -1014,6 +1092,8 @@ def run_baseline_agent(
             "summary_scores": summary_scores,
             "average_score": round(sum(summary_scores.values()) / max(1, len(summary_scores)), 4),
             "model": model,
+            "models": {r: team[r].cfg.model for r in ROLES},
+            "heterogeneous": len({team[r].cfg.model for r in ROLES}) > 1,
             "timestamp": timestamp,
         }, indent=2))
         if verbose:
@@ -1030,6 +1110,8 @@ def run_baseline_agent(
             sum(summary_scores.values()) / max(1, len(summary_scores)), 4
         ),
         "model": model,
+        "models": {r: team[r].cfg.model for r in ROLES},
+        "heterogeneous": len({team[r].cfg.model for r in ROLES}) > 1,
     }
 
 # ---------------------------------------------------------------------------

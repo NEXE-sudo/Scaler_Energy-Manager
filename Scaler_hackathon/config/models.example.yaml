@@ -1,0 +1,34 @@
+# Per-role model configuration for Scaler Energy Manager.
+#
+# Use:   export SCALER_MODELS_FILE=config/models.example.yaml
+#        export NEBIUS_API_KEY=...            # the key itself never goes in this file
+# Check: python scripts/smoke_test_models.py --list-models nemotron
+#        python scripts/smoke_test_models.py
+#
+# Model IDs below are PLACEHOLDERS. Copy real IDs from `--list-models`; catalogs change
+# and an ID that works for one account may not for another.
+#
+# Precedence: built-in defaults < this file < SCALER_* environment variables
+# (e.g. SCALER_DISPATCH_MODEL=... overrides roles.dispatch.model).
+# Roles with the same model ID form a homogeneous team; different IDs make it heterogeneous.
+
+provider: nebius            # preset: base_url + api_key_env (NEBIUS_API_KEY). Override per role if needed.
+
+defaults:
+  temperature: 0.2
+  timeout_s: 60
+  max_tokens: 256
+  # Reasoning models (e.g. Nemotron on Token Factory) may spend the whole budget thinking and
+  # return an empty answer. Either raise max_tokens or try turning thinking off. Whether the
+  # provider honours this is unverified: run the smoke test, it probes both options.
+  # extra_body: {chat_template_kwargs: {enable_thinking: false}}
+
+roles:
+  planning:                 # strategic plan (hard task) + gated per-step planning
+    model: REPLACE_WITH_ID_FROM_LIST_MODELS
+    max_tokens: 1024
+    plan_max_tokens: 1536
+  dispatch:                 # called every step, twice (proposal + revision)
+    model: REPLACE_WITH_ID_FROM_LIST_MODELS
+  market:
+    model: REPLACE_WITH_ID_FROM_LIST_MODELS

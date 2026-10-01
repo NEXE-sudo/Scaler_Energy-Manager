@@ -86,6 +86,26 @@ def observation_to_text(obs: dict) -> str:
 Goal: Maintain 50Hz, avoid blackout.
 """
 
+def split_reasoning(text: Optional[str]) -> "tuple[str, Optional[str], bool]":
+    """Separate inline reasoning from the answer in model text.
+
+    Returns (answer, reasoning, unclosed):
+      - "<think>r</think>answer" -> (answer, r, False)
+      - "r</think>answer" (opening tag omitted, as some Nemotron templates do) -> (answer, r, False)
+      - "<think>r..." never closed (budget exhausted mid-thought) -> (text before tag, r, True)
+      - no tags -> (text, None, False)
+    """
+    if not text:
+        return "", None, False
+    if "</think>" in text:
+        before, after = text.split("</think>", 1)
+        return after.strip(), before.replace("<think>", "").strip() or None, False
+    if "<think>" in text:
+        head, tail = text.split("<think>", 1)
+        return head.strip(), tail.strip() or None, True
+    return text, None, False
+
+
 def try_extract_action_from_llm_output(text: str) -> Optional[dict]:
     """Parse an action dict from model output. Returns None if nothing parseable."""
     if not text:

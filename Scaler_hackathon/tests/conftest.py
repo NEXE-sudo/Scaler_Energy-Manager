@@ -31,15 +31,31 @@ DEFAULT_REPLIES = {
 class FakeClient:
     """Records every chat.completions.create call and replies from a script.
 
-    replies: role -> str | callable(call_index_for_role) -> str | Exception
+    replies: role -> str | None | dict | Exception | callable(n_for_role)
+        dict form: {"content": str|None, "reasoning_content": str|None, "finish_reason": str}
+    fn: optional callable(role, n_for_role, kwargs) -> reply, takes precedence over `replies`
+    model_ids / list_error: what client.models.list() returns / raises
+    base_url: exposed like the real SDK client (used for the trace's provider host)
     """
 
-    def __init__(self, replies=None, usage=(11, 7)):
+    def __init__(self, replies=None, usage=(11, 7), fn=None, model_ids=(), list_error=None, base_url=None):
         self.replies = {**DEFAULT_REPLIES, **(replies or {})}
+        self.fn = fn
         self.calls = []  # list of dicts: role, model, system, user, kwargs
         self._per_role = {}
         self._usage = usage
+        self.base_url = base_url
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+        self._model_ids = list(model_ids)
+        self._list_error = list_error
+        self.list_calls = 0
+        self.models = SimpleNamespace(list=self._list_models)
+
+    def _list_models(self):
+        self.list_calls += 1
+        if self._list_error is not None:
+            raise self._list_error
+        return SimpleNamespace(data=[SimpleNamespace(id=i) for i in self._model_ids])
 
     def _create(self, **kwargs):
         messages = kwargs["messages"]
@@ -51,14 +67,21 @@ class FakeClient:
         self.calls.append(
             {"role": role, "model": kwargs.get("model"), "system": system, "user": user, "kwargs": kwargs}
         )
-        reply = self.replies[role]
+        reply = self.fn(role, n, kwargs) if self.fn else self.replies[role]
         if callable(reply):
             reply = reply(n)
         if isinstance(reply, Exception):
             raise reply
         usage = SimpleNamespace(prompt_tokens=self._usage[0], completion_tokens=self._usage[1])
-        msg = SimpleNamespace(content=reply)
-        return SimpleNamespace(choices=[SimpleNamespace(message=msg)], usage=usage)
+        finish = "stop"
+        extra = {}
+        if isinstance(reply, dict):
+            finish = reply.get("finish_reason", "stop")
+            if reply.get("reasoning_content") is not None:
+                extra["reasoning_content"] = reply["reasoning_content"]
+            reply = reply.get("content")
+        msg = SimpleNamespace(content=reply, **extra)
+        return SimpleNamespace(choices=[SimpleNamespace(message=msg, finish_reason=finish)], usage=usage)
 
 
 @pytest.fixture
